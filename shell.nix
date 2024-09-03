@@ -6,6 +6,7 @@ pkgs.mkShell {
     pkg-config
     wayland
     xwayland
+    xorg.xorgproto
     xorg.libxcb
     xorg.xcbutilwm
     wayland-protocols

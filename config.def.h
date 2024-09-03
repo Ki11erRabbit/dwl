@@ -1,3 +1,4 @@
+#include <X11/XF86keysym.h>
 /* Taken from https://github.com/djpohly/dwl/issues/466 */
 #define COLOR(hex)    { ((hex >> 24) & 0xFF) / 255.0f, \
                         ((hex >> 16) & 0xFF) / 255.0f, \
@@ -217,8 +218,8 @@ static const Key keys[] = {
 	TAGKEYS(          XKB_KEY_8, XKB_KEY_asterisk,                   7),
 	TAGKEYS(          XKB_KEY_9, XKB_KEY_parenleft,                  8),
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Q,          quit,           {0} },
-	{ 0,                     XKB_KEY_SunAudioRaiseVolume,spawn,          {.v = upvol} },
-	{ 0,                     XKB_KEY_SunAudioLowerVolume,spawn,          {.v = downvol} },
+	{ 0,                     XF86XK_AudioRaiseVolume,spawn,          {.v = upvol} },
+	{ 0,                     XF86XK_AudioLowerVolume,spawn,          {.v = downvol} },
 
 	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
