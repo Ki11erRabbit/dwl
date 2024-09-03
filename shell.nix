@@ -11,7 +11,7 @@ pkgs.mkShell {
     wayland-protocols
     wayland-scanner
     libinput
-    wlroots_0_16
+    wlroots_0_17
     libxkbcommon
     pixman
   ];
