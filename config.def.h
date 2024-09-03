@@ -93,7 +93,7 @@ static const struct xkb_rule_names xkb_rules = {
 };
 
 static const int repeat_rate = 25;
-static const int repeat_delay = 450;
+static const int repeat_delay = 400;
 
 /* Trackpad */
 static const int tap_to_click = 1;
@@ -166,7 +166,7 @@ static const PassKeypressRule pass_rules[] = {
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_Home),
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_End),
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_F12),
-	ADDPASSRULE("discord", 0, XKB_KEY_n),
+	ADDPASSRULE("discord", 0, XF86XK_AudioMicMute),
 };
 
 #include "shiftview.c"
@@ -220,6 +220,7 @@ static const Key keys[] = {
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Q,          quit,           {0} },
 	{ 0,                     XF86XK_AudioRaiseVolume,spawn,          SHCMD("pamixer -i 3 && pkill -RTMIN+8 waybar") },
 	{ 0,                     XF86XK_AudioLowerVolume,spawn,          SHCMD("pamixer -d 3 && pkill -RTMIN+8 waybar") },
+	{ 0,                     XF86XK_AudioMicMute,    spawn,          SHCMD("amixer set Capture toggle") },
 
 	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
