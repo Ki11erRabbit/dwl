@@ -31,6 +31,7 @@ static int log_level = WLR_ERROR;
 static const char *const autostart[] = {
         "waybar", NULL,
         "fnott", NULL,
+        "configure-monitors.sh", NULL,
         "setup-wallpaper.sh", NULL,
         "setup-swayidle.sh", NULL,
         "setup-keyboard.sh", NULL,
@@ -154,8 +155,8 @@ static const char *menucmd[] = { "bemenu-run", NULL };
 
 static const char *fileManager[] = { "dolphin", NULL };
 static const char *emacsclient[] = { "emacsclient", "-c", "-a", "\'emacs\'", NULL };
-static const char *upvol[] = { "pamixer", "-i", "3", NULL };
-static const char *downvol[] = { "pamixer", "-d", "3", NULL };
+static const char *upvol[] = { "pamixer", "-i", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
+static const char *downvol[] = { "pamixer", "-d", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
 static const char *screenshotClipboard[] = { "grimshot", "copy", "area", NULL };
 static const char *screenshotSave[] = { "grimshot", "save", "area", NULL };
 
