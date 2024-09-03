@@ -36,7 +36,7 @@ stdenv.mkDerivation ({
         pixman
         wayland
         wayland-protocols
-        wlroots_0_17
+        wlroots
         libX11
         xcbutilwm
         xwayland
