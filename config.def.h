@@ -16,8 +16,8 @@ static const float focuscolor[]            = COLOR(0x005577ff);
 static const float urgentcolor[]           = COLOR(0xff0000ff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.1f, 0.1f, 0.1f, 1.0f}; /* You can also use glsl colors */
-static const char *cursor_theme            = NULL;
-static const char cursor_size[]            = "24"; /* Make sure it's a valid integer, otherwise things will break */
+static const char *cursor_theme            = "Posy_Cursor";
+static const char cursor_size[]            = "32"; /* Make sure it's a valid integer, otherwise things will break */
 
 static const unsigned int swipe_min_threshold = 0;
 
@@ -29,8 +29,14 @@ static int log_level = WLR_ERROR;
 
 /* Autostart */
 static const char *const autostart[] = {
-        "wbg", "/path/to/your/image", NULL,
-        "alacritty", NULL,
+        "waybar", NULL,
+        "fnott", NULL,
+        "setup-wallpaper.sh", NULL,
+        "setup-swayidle.sh", NULL,
+        "setup-keyboard.sh", NULL,
+        "nm-applet", NULL,
+        "blueman-applet", NULL,
+        "kdeconnect-indicator", NULL,
         NULL /* terminate */
 };
 
@@ -69,9 +75,9 @@ static const MonitorRule monrules[] = {
 	* All other number's set the mode at the index n, 0 is the standard mode; see wlr-randr
 	*/
 	/* defaults */
-    { "HDMI-A-1", 0.55, 2,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_270,       0,   690,  1920, 1080, 60.0, 0},
-    { "DP-1",     0.55, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    1081,840,  2560, 1440, 120.0, 1},
-    { "DP-2",     0.5,  1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    3641,990,  1920, 1080, 60.0, 0},
+    //{ "HDMI-A-1", 0.55, 2,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_270,       0,   690,  1920, 1080, 60.0, 0},
+    //{ "DP-1",     0.55, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    1081,840,  2560, 1440, 120.0, 1},
+    //{ "DP-2",     0.5,  1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    3641,990,  1920, 1080, 60.0, 0},
 	{ NULL,       0.55f, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL, -1, -1, 0, 0, 0.0f, 0 ,1},
 };
 
