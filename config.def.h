@@ -39,6 +39,7 @@ static const char *const autostart[] = {
         "nm-applet", NULL,
         "blueman-applet", NULL,
         "kdeconnect-indicator", NULL,
+        "dbus-update-activation-environment", "--systemd", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP=dwl", NULL,
         NULL /* terminate */
 };
 
