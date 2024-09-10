@@ -227,9 +227,12 @@ static const Key keys[] = {
 	TAGKEYS(          XKB_KEY_8, XKB_KEY_asterisk,                   7),
 	TAGKEYS(          XKB_KEY_9, XKB_KEY_parenleft,                  8),
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Q,          quit,           {0} },
+	{ 0,                     XF86XK_AudioMute,       spawn,          SHCMD("pamixer --toggle-mute && pkill -RTMIN+8 waybar") },
 	{ 0,                     XF86XK_AudioRaiseVolume,spawn,          SHCMD("pamixer -i 3 && pkill -RTMIN+8 waybar") },
 	{ 0,                     XF86XK_AudioLowerVolume,spawn,          SHCMD("pamixer -d 3 && pkill -RTMIN+8 waybar") },
 	{ 0,                     XF86XK_AudioMicMute,    spawn,          SHCMD("amixer set Capture toggle") },
+	{ 0,                     XF86XK_MonBrightnessUp, spawn,          SHCMD("light -A 5") },
+	{ 0,                     XF86XK_MonBrightnessDown,spawn,         SHCMD("light -A 5") },
 
 	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
