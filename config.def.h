@@ -44,6 +44,7 @@ static const char *const autostart[] = {
 };
 
 static const char *const shutdown[] = {
+        "sudo", "pkill", "kmonad", NULL,
         "pkill", "setup-keyboard", NULL,
         "pkill", "setup-swayidle", NULL,
         "pkill", "setup-wallpaper", NULL,
