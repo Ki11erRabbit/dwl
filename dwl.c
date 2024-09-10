@@ -288,6 +288,7 @@ static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
 static void arrangelayers(Monitor *m);
 static void autostartexec(void);
+static void shutdownexec(void);
 static void axisnotify(struct wl_listener *listener, void *data);
 static void buttonpress(struct wl_listener *listener, void *data);
 static int ongesture(struct wlr_pointer_swipe_end_event *event);
@@ -507,6 +508,8 @@ static xcb_atom_t netatom[NetLast];
 
 static pid_t *autostart_pids;
 static size_t autostart_len;
+static pid_t *shutdown_pids;
+static size_t shutdown_len;
 
 struct Pertag {
 	unsigned int curtag, prevtag; /* current and previous tag */
@@ -697,6 +700,27 @@ autostartexec(void) {
 	autostart_pids = calloc(autostart_len, sizeof(pid_t));
 	for (p = autostart; *p; i++, p++) {
 		if ((autostart_pids[i] = fork()) == 0) {
+			setsid();
+			execvp(*p, (char *const *)p);
+			die("dwl: execvp %s:", *p);
+		}
+		/* skip arguments */
+		while (*++p);
+	}
+}
+
+void
+shutdownexec(void) {
+	const char *const *p;
+	size_t i = 0;
+
+	/* count entries */
+	for (p = shutdown; *p; shutdown_len++, p++)
+		while (*++p);
+
+	shutdown_pids = calloc(shutdown_len, sizeof(pid_t));
+	for (p = shutdown; *p; i++, p++) {
+		if ((shutdown_pids[i] = fork()) == 0) {
 			setsid();
 			execvp(*p, (char *const *)p);
 			die("dwl: execvp %s:", *p);
@@ -982,6 +1006,13 @@ cleanup(void)
 		if (0 < autostart_pids[i]) {
 			kill(autostart_pids[i], SIGTERM);
 			waitpid(autostart_pids[i], NULL, 0);
+		}
+	}
+    shutdownexec();
+	for (i = 0; i < shutdown_len; i++) {
+		if (0 < shutdown_pids[i]) {
+			kill(shutdown_pids[i], SIGTERM);
+			waitpid(shutdown_pids[i], NULL, 0);
 		}
 	}
 

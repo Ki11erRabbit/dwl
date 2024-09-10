@@ -43,6 +43,12 @@ static const char *const autostart[] = {
         NULL /* terminate */
 };
 
+static const char *const shutdown[] = {
+        "pkill", "setup-keyboard", NULL,
+        "pkill", "setup-swayidle", NULL,
+        "pkill", "setup-wallpaper", NULL,
+        NULL /* terminate */
+};
 
 /* NOTE: ALWAYS keep a rule declared even if you don't use rules (e.g leave at least one example) */
 static const Rule rules[] = {
@@ -241,8 +247,8 @@ static const Button buttons[] = {
 };
 
 static const Gesture gestures[] = {
-	// { MODKEY, SWIPE_LEFT, 4, shiftview, { .i = 1 } },
-	// { MODKEY, SWIPE_RIGHT, 4, shiftview, { .i = -1 } },
+	{ MODKEY, SWIPE_LEFT, 3, shiftview, { .i = 1 } },
+	{ MODKEY, SWIPE_RIGHT, 3, shiftview, { .i = -1 } },
 	{ MODKEY, SWIPE_UP, 3, focusstack, {.i = 1} },
 	{ MODKEY, SWIPE_DOWN, 3, focusstack, {.i = -1} },
 };
