@@ -170,7 +170,7 @@ static const char *downvol[] = { "pamixer", "-d", "3", "&&", "pkill", "-RTMIN+8"
 static const char *screenshotClipboard[] = { "grimshot", "copy", "area", NULL };
 static const char *screenshotSave[] = { "grimshot", "save", "area", NULL };
 static const char *screenshotClipScreen[] = { "grimshot", "copy", "screen", NULL };
-static const char *screenshotSave[] = { "grimshot", "save", "screen", NULL };
+static const char *screenshotSaveScreen[] = { "grimshot", "save", "screen", NULL };
 
 #define ADDPASSRULE(S, M, K) {.appid = S, .len = LENGTH(S), .key = K}
 static const PassKeypressRule pass_rules[] = {
