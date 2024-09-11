@@ -44,7 +44,7 @@ static const char *const autostart[] = {
 };
 
 static const char *const shutdown[] = {
-        "sudo", "pkill", "kmonad", NULL,
+        "sudo", "/run/current-system/sw/bin/pkill", "kmonad", NULL,
         "pkill", "setup-keyboard", NULL,
         "pkill", "setup-swayidle", NULL,
         "pkill", "setup-wallpaper", NULL,
@@ -169,6 +169,8 @@ static const char *upvol[] = { "pamixer", "-i", "3", "&&", "pkill", "-RTMIN+8", 
 static const char *downvol[] = { "pamixer", "-d", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
 static const char *screenshotClipboard[] = { "grimshot", "copy", "area", NULL };
 static const char *screenshotSave[] = { "grimshot", "save", "area", NULL };
+static const char *screenshotClipScreen[] = { "grimshot", "copy", "screen", NULL };
+static const char *screenshotSave[] = { "grimshot", "save", "screen", NULL };
 
 #define ADDPASSRULE(S, M, K) {.appid = S, .len = LENGTH(S), .key = K}
 static const PassKeypressRule pass_rules[] = {
@@ -186,6 +188,8 @@ static const Key keys[] = {
 	{ MODKEY,                    XKB_KEY_d,          spawn,          {.v = menucmd} },
 	{ MODKEY,                    XKB_KEY_Return,     spawn,          {.v = termcmd} },
 	{ MODKEY,                    XKB_KEY_s,          regions,        {.v = screenshotSave} },
+	{ 0,                         XKB_KEY_Print,      regions,        {.v = screenshotSaveScreen} },
+	{ 0|WLR_MODIFIER_SHIFT,      XKB_KEY_Print,      regions,        {.v = screenshotClipScreen} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_S,          regions,        {.v = screenshotClipboard} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Return,     spawn,          {.v = emacsclient} },
 	{ MODKEY,                    XKB_KEY_r,          spawn,          {.v = fileManager} },
@@ -232,7 +236,12 @@ static const Key keys[] = {
 	{ 0,                     XF86XK_AudioLowerVolume,spawn,          SHCMD("pamixer -d 3 && pkill -RTMIN+8 waybar") },
 	{ 0,                     XF86XK_AudioMicMute,    spawn,          SHCMD("amixer set Capture toggle") },
 	{ 0,                     XF86XK_MonBrightnessUp, spawn,          SHCMD("light -A 5") },
-	{ 0,                     XF86XK_MonBrightnessDown,spawn,         SHCMD("light -A 5") },
+	{ 0,                     XF86XK_MonBrightnessDown,spawn,         SHCMD("light -U 5") },
+	{ 0,                     XF86XK_Tools,           spawn,          SHCMD("/home/ki11errabbit/.local/bin/nix-config.sh") },
+	{ 0,                     XF86XK_Search,          spawn,          SHCMD("bemenu-run") },
+	{ 0,                     XF86XK_WLAN,            spawn,          SHCMD("alacritty -e nmtui") },
+	{ 0,                     XF86XK_RotateWindows,   spawn,          SHCMD("/home/ki11errabbit/.local/bin/rotate-screen.sh") },
+	{ 0,                     XF86XK_Explorer,        spawn,          {.v = fileManager} },
 
 	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
