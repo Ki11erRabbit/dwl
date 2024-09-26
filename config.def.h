@@ -58,7 +58,7 @@ static const Rule rules[] = {
 	//{ "Gimp_EXAMPLE",     NULL,       0,            1,          0,      0,         -1 }, /* Start on currently visible tags floating, not tiled */
 	//{ "firefox_EXAMPLE",  NULL,       1 << 8,       0,          0,      0,         -1 }, /* Start on ONLY tag "9" */
 	{ "foot",             NULL,       0,            0,          1,      1,         -1 }, /* make foot swallow clients that are not foot */
-	{ "alacritty",        NULL,       0,            0,          1,      1,         -1 }, /* make alacritty swallow clients that are not alacritty */
+	{ "Alacritty",        NULL,       0,            0,          1,      1,         -1 }, /* make alacritty swallow clients that are not alacritty */
 };
 
 /* layout(s) */
