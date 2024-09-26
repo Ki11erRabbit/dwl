@@ -5,4 +5,4 @@
 
 export XDG_CURRENT_DESKTOP=sway
 
-XDG_CURRENT_DESKTOP=sway dbus-run-session dwl
+XDG_CURRENT_DESKTOP=sway dwl
