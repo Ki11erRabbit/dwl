@@ -3,6 +3,6 @@
 
 
 
-export XDG_CURRENT_DESKTOP=dwl
+export XDG_CURRENT_DESKTOP=sway
 
-XDG_CURRENT_DESKTOP=dwl dbus-run-session dwl
+XDG_CURRENT_DESKTOP=sway dbus-run-session dwl
