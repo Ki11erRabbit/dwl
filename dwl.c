@@ -5,6 +5,7 @@
 #include <libinput.h>
 #include <linux/input-event-codes.h>
 #include <math.h>
+#include <libdrm/drm_fourcc.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,10 +13,12 @@
 #include <time.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
+#include <wayland-util.h>
 #include <wlr/backend.h>
 #include <wlr/backend/libinput.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/wlr_renderer.h>
+#include <wlr/types/wlr_alpha_modifier_v1.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_cursor_shape_v1.h>
@@ -23,6 +26,7 @@
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_drm.h>
 #include <wlr/types/wlr_export_dmabuf_v1.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_fractional_scale_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include <wlr/types/wlr_idle_inhibit_v1.h>
@@ -58,6 +62,7 @@
 #include <wlr/types/wlr_xdg_decoration_v1.h>
 #include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
+#include <wlr/interfaces/wlr_buffer.h>
 #include <wlr/util/log.h>
 #include <wlr/util/region.h>
 #include <xkbcommon/xkbcommon.h>
@@ -69,6 +74,7 @@
 
 #include "dwl-ipc-unstable-v2-protocol.h"
 #include "util.h"
+#include "drwl.h"
 
 /* macros */
 #define MAX(A, B)               ((A) > (B) ? (A) : (B))
@@ -82,9 +88,11 @@
 #define LISTEN_STATIC(E, H)     do { static struct wl_listener _l = {.notify = (H)}; wl_signal_add((E), &_l); } while (0)
 
 /* enums */
+enum { SchemeNorm, SchemeSel, SchemeUrg }; /* color schemes */
 enum { CurNormal, CurPressed, CurMove, CurResize }; /* cursor */
 enum { XDGShell, LayerShell, X11 }; /* client types */
 enum { LyrBg, LyrBottom, LyrTile, LyrFloat, LyrTop, LyrFS, LyrOverlay, LyrBlock, NUM_LAYERS }; /* scene layers */
+enum { TBarNone, TBarLabel, TBarMultiple, TBarAlways }; /* tbar types */
 #ifdef XWAYLAND
 enum { NetWMWindowTypeDialog, NetWMWindowTypeSplash, NetWMWindowTypeToolbar,
 	NetWMWindowTypeUtility, NetLast }; /* EWMH atoms */
@@ -105,7 +113,13 @@ typedef struct {
 	const Arg arg;
 } Button;
 
-typedef struct Pertag Pertag;
+typedef struct {
+    struct wlr_buffer base;
+    struct wl_listener release;
+    bool busy;
+    Img *image;
+    uint32_t data[];
+} Buffer;
 
 typedef struct {
 	unsigned int mod;
@@ -115,6 +129,7 @@ typedef struct {
 	const Arg arg;
 } Gesture;
 
+typedef struct Pertag Pertag;
 typedef struct Monitor Monitor;
 typedef struct Client Client;
 struct Client {
@@ -122,9 +137,15 @@ struct Client {
 	unsigned int type; /* XDGShell or X11* */
 	struct wlr_box geom; /* layout-relative, includes border */
 	Monitor *mon;
+	char *output;
 	struct wlr_scene_tree *scene;
 	struct wlr_scene_rect *border[4]; /* top, bottom, left, right */
 	struct wlr_scene_tree *scene_surface;
+	struct wlr_scene_buffer *tbar_buffer;
+	Drwl *drw;
+	Buffer *pool[2];
+	int tbar_height, tbar_real_height;
+	float tbar_scale;
 	struct wl_list link;
 	struct wl_list flink;
 	union {
@@ -141,6 +162,11 @@ struct Client {
 	struct wl_listener fullscreen;
 	struct wl_listener set_decoration_mode;
 	struct wl_listener destroy_decoration;
+	struct wlr_foreign_toplevel_handle_v1 *foreign_toplevel;
+	struct wl_listener factivate;
+	struct wl_listener fclose;
+	struct wl_listener ffullscreen;
+	struct wl_listener fdestroy;
 	struct wlr_box prev; /* layout-relative, includes border */
 	struct wlr_box bounds;
 #ifdef XWAYLAND
@@ -152,7 +178,7 @@ struct Client {
 #endif
 	unsigned int bw;
 	uint32_t tags;
-	int isfloating, isurgent, isfullscreen, isterm, noswallow;
+	int isfloating, isurgent, isfullscreen, isterm, noswallow, tbar_enabled, resize_tbar_enabled;
 	uint32_t resize; /* configure serial of a pending resize */
 	pid_t pid;
 	Client *swallowing, *swallowedby;
@@ -204,6 +230,8 @@ typedef struct {
 
 typedef struct {
 	const char *symbol;
+	unsigned int tbar_type; /* type of tbar */
+	int tbar_only_top;
 	void (*arrange)(Monitor *);
 } Layout;
 
@@ -242,11 +270,6 @@ typedef struct {
 	const Layout *lt;
 	enum wl_output_transform rr;
 	int x, y;
-	int resx;
-	int resy;
-	float rate;
-	int mode;
-	int adaptive;
 } MonitorRule;
 
 typedef struct {
@@ -280,6 +303,12 @@ typedef struct {
 	struct wl_listener destroy;
 } SessionLock;
 
+typedef struct {
+	const char *cmd; /* command to run a menu */
+	void (*feed)(FILE *f); /* feed input to menu */
+	void (*action)(char *line); /* do action based on menu output */
+} Menu;
+
 /* function declarations */
 static void applybounds(Client *c, struct wlr_box *bbox);
 static void applyrules(Client *c);
@@ -288,8 +317,13 @@ static void arrangelayer(Monitor *m, struct wl_list *list,
 		struct wlr_box *usable_area, int exclusive);
 static void arrangelayers(Monitor *m);
 static void autostartexec(void);
-static void shutdownexec(void);
 static void axisnotify(struct wl_listener *listener, void *data);
+static Buffer *bufclient(Client *c);
+static void bufdestroy(struct wlr_buffer *wlr_buffer);
+static bool bufdatabegin(struct wlr_buffer *wlr_buffer, uint32_t flags,
+		void **data, uint32_t *format, size_t *stride);
+static void bufdataend(struct wlr_buffer *wlr_buffer);
+static void bufrelease(struct wl_listener *listener, void *data);
 static void buttonpress(struct wl_listener *listener, void *data);
 static int ongesture(struct wlr_pointer_swipe_end_event *event);
 static void swipe_begin(struct wl_listener *listener, void *data);
@@ -307,6 +341,7 @@ static void cleanupmon(struct wl_listener *listener, void *data);
 static void closemon(Monitor *m);
 static void commitlayersurfacenotify(struct wl_listener *listener, void *data);
 static void commitnotify(struct wl_listener *listener, void *data);
+static void commitpopup(struct wl_listener *listener, void *data);
 static void createdecoration(struct wl_listener *listener, void *data);
 static void createidleinhibitor(struct wl_listener *listener, void *data);
 static void createkeyboard(struct wlr_keyboard *keyboard);
@@ -317,6 +352,7 @@ static void createmon(struct wl_listener *listener, void *data);
 static void createnotify(struct wl_listener *listener, void *data);
 static void createpointer(struct wlr_pointer *pointer);
 static void createpointerconstraint(struct wl_listener *listener, void *data);
+static void createpopup(struct wl_listener *listener, void *data);
 static void cursorconstrain(struct wlr_pointer_constraint_v1 *constraint);
 static void cursorframe(struct wl_listener *listener, void *data);
 static void cursorwarptohint(void);
@@ -332,6 +368,8 @@ static void destroysessionlock(struct wl_listener *listener, void *data);
 static void destroysessionmgr(struct wl_listener *listener, void *data);
 static void destroykeyboardgroup(struct wl_listener *listener, void *data);
 static Monitor *dirtomon(enum wlr_direction dir);
+static void drawtbars(Monitor *m, int floating, int clients_changed);
+static void drawtbar(Client *c, unsigned int tbar_type, unsigned int len, Client *sel, Client *sel_in_layout);
 static void dwl_ipc_manager_bind(struct wl_client *client, void *data, uint32_t version, uint32_t id);
 static void dwl_ipc_manager_destroy(struct wl_resource *resource);
 static void dwl_ipc_manager_get_output(struct wl_client *client, struct wl_resource *resource, uint32_t id, struct wl_resource *output);
@@ -347,7 +385,9 @@ static void focusclient(Client *c, int lift);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 static Client *focustop(Monitor *m);
+static Client *focustop_onlytiled(Monitor *m, int onlytiled);
 static void fullscreennotify(struct wl_listener *listener, void *data);
+static void gpureset(struct wl_listener *listener, void *data);
 static void handlesig(int signo);
 static void incnmaster(const Arg *arg);
 static void inputdevice(struct wl_listener *listener, void *data);
@@ -360,8 +400,13 @@ static void killclient(const Arg *arg);
 static void locksession(struct wl_listener *listener, void *data);
 static void mapnotify(struct wl_listener *listener, void *data);
 static void maximizenotify(struct wl_listener *listener, void *data);
+static void menu(const Arg *arg);
+static int menuloop(void *data);
+static void menuwinfeed(FILE *f);
+static void menuwinaction(char *line);
+static void menulayoutfeed(FILE *f);
+static void menulayoutaction(char *line);
 static void monocle(Monitor *m);
-static void movestack(const Arg *arg);
 static void motionabsolute(struct wl_listener *listener, void *data);
 static void motionnotify(uint32_t time, struct wlr_input_device *device, double sx,
 		double sy, double sx_unaccel, double sy_unaccel);
@@ -417,11 +462,16 @@ static Monitor *xytomon(double x, double y);
 static void xytonode(double x, double y, struct wlr_surface **psurface,
 		Client **pc, LayerSurface **pl, double *nx, double *ny);
 static void zoom(const Arg *arg);
-static void regions(const Arg *arg);
+static void createforeigntoplevel(Client *c);
+static void factivatenotify(struct wl_listener *listener, void *data);
+static void fclosenotify(struct wl_listener *listener, void *data);
+static void fdestroynotify(struct wl_listener *listener, void *data);
+static void ffullscreennotify(struct wl_listener *listener, void *data);
 static pid_t getparentprocess(pid_t p);
 static int isdescprocess(pid_t p, pid_t c);
 static Client *termforwin(Client *w);
 static void swallow(Client *c, Client *w);
+static void regions(const Arg *arg);
 
 /* variables */
 static const char broken[] = "broken";
@@ -429,6 +479,7 @@ static pid_t child_pid = -1;
 static int locked;
 static void *exclusive_focus;
 static struct wl_display *dpy;
+static struct wl_event_loop *event_loop;
 static struct wlr_backend *backend;
 static struct wlr_scene *scene;
 static struct wlr_scene_tree *layers[NUM_LAYERS];
@@ -469,6 +520,8 @@ static struct wlr_scene_rect *locked_bg;
 static struct wlr_session_lock_v1 *cur_lock;
 static struct wl_listener lock_listener = {.notify = locksession};
 
+static struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_mgr;
+
 static struct wlr_seat *seat;
 static KeyboardGroup *kb_group;
 static unsigned int cursor_mode;
@@ -480,12 +533,23 @@ static struct wlr_box sgeom;
 static struct wl_list mons;
 static Monitor *selmon;
 
-static struct zdwl_ipc_manager_v2_interface dwl_manager_implementation = {.release = dwl_ipc_manager_release, .get_output = dwl_ipc_manager_get_output};
-static struct zdwl_ipc_output_v2_interface dwl_output_implementation = {.release = dwl_ipc_output_release, .set_tags = dwl_ipc_output_set_tags, .set_layout = dwl_ipc_output_set_layout, .set_client_tags = dwl_ipc_output_set_client_tags};
-
 static uint32_t swipe_fingers = 0;
 static double swipe_dx = 0;
 static double swipe_dy = 0;
+
+static struct zdwl_ipc_manager_v2_interface dwl_manager_implementation = {.release = dwl_ipc_manager_release, .get_output = dwl_ipc_manager_get_output};
+static struct zdwl_ipc_output_v2_interface dwl_output_implementation = {.release = dwl_ipc_output_release, .set_tags = dwl_ipc_output_set_tags, .set_layout = dwl_ipc_output_set_layout, .set_client_tags = dwl_ipc_output_set_client_tags};
+
+static const struct wlr_buffer_impl buffer_impl = {
+	.destroy = bufdestroy,
+	.begin_data_ptr_access = bufdatabegin,
+	.end_data_ptr_access = bufdataend,
+};
+
+static struct wl_event_source *menu_source;
+static pid_t menu_pid;
+static int menu_fd;
+static const Menu *menu_current;
 
 #ifdef XWAYLAND
 static void activatex11(struct wl_listener *listener, void *data);
@@ -501,15 +565,17 @@ static xcb_atom_t netatom[NetLast];
 #endif
 
 /* configuration, allows nested code to access above variables */
+#include "push.h"
 #include "config.h"
+#include "push.c"
 
 /* attempt to encapsulate suck into one file */
 #include "client.h"
 
+static const unsigned int abzsquare = swipe_min_threshold * swipe_min_threshold;
+
 static pid_t *autostart_pids;
 static size_t autostart_len;
-static pid_t *shutdown_pids;
-static size_t shutdown_len;
 
 struct Pertag {
 	unsigned int curtag, prevtag; /* current and previous tag */
@@ -518,8 +584,6 @@ struct Pertag {
 	unsigned int sellts[TAGCOUNT + 1]; /* selected layouts */
 	const Layout *ltidxs[TAGCOUNT + 1][2]; /* matrix of tags and layouts indexes  */
 };
-
-static const unsigned int abzsquare = swipe_min_threshold * swipe_min_threshold;
 
 /* function implementations */
 void
@@ -557,6 +621,11 @@ applyrules(Client *c)
 
 	c->pid = client_get_pid(c);
 
+	if (c->foreign_toplevel) {
+		wlr_foreign_toplevel_handle_v1_set_app_id(c->foreign_toplevel, appid);
+		wlr_foreign_toplevel_handle_v1_set_title(c->foreign_toplevel, title);
+	}
+
 	for (r = rules; r < END(rules); r++) {
 		if ((!r->title || strstr(title, r->title))
 				&& (!r->id || strstr(appid, r->id))) {
@@ -593,14 +662,16 @@ void
 arrange(Monitor *m)
 {
 	Client *c;
+	int enabled;
 
 	if (!m->wlr_output->enabled)
 		return;
 
 	wl_list_for_each(c, &clients, link) {
 		if (c->mon == m) {
-			wlr_scene_node_set_enabled(&c->scene->node, VISIBLEON(c, m));
-			client_set_suspended(c, !VISIBLEON(c, m));
+			enabled = VISIBLEON(c, m);
+			wlr_scene_node_set_enabled(&c->scene->node, enabled);
+			client_set_suspended(c, !enabled);
 		}
 	}
 
@@ -612,7 +683,7 @@ arrange(Monitor *m)
 	/* We move all clients (except fullscreen and unmanaged) to LyrTile while
 	 * in floating layout to avoid "real" floating clients be always on top */
 	wl_list_for_each(c, &clients, link) {
-		if (c->mon != m || c->isfullscreen)
+		if (c->mon != m || c->scene->node.parent == layers[LyrFS])
 			continue;
 
 		wlr_scene_node_reparent(&c->scene->node,
@@ -625,6 +696,7 @@ arrange(Monitor *m)
 
 	if (m->lt[m->sellt]->arrange)
 		m->lt[m->sellt]->arrange(m);
+
 	motionnotify(0, NULL, 0, 0, 0, 0);
 	checkidleinhibitor(NULL);
 }
@@ -710,27 +782,6 @@ autostartexec(void) {
 }
 
 void
-shutdownexec(void) {
-	const char *const *p;
-	size_t i = 0;
-
-	/* count entries */
-	for (p = shutdown; *p; shutdown_len++, p++)
-		while (*++p);
-
-	shutdown_pids = calloc(shutdown_len, sizeof(pid_t));
-	for (p = shutdown; *p; i++, p++) {
-		if ((shutdown_pids[i] = fork()) == 0) {
-			setsid();
-			execvp(*p, (char *const *)p);
-			die("dwl: execvp %s:", *p);
-		}
-		/* skip arguments */
-		while (*++p);
-	}
-}
-
-void
 axisnotify(struct wl_listener *listener, void *data)
 {
 	/* This event is forwarded by the cursor when a pointer emits an axis event,
@@ -742,7 +793,75 @@ axisnotify(struct wl_listener *listener, void *data)
 	/* Notify the client with pointer focus of the axis event. */
 	wlr_seat_pointer_notify_axis(seat,
 			event->time_msec, event->orientation, event->delta,
-			event->delta_discrete, event->source);
+			event->delta_discrete, event->source, event->relative_direction);
+}
+
+Buffer *
+bufclient(Client *c)
+{
+	size_t i;
+	Buffer *buf = NULL;
+
+	for (i = 0; i < LENGTH(c->pool); i++) {
+		if (c->pool[i]) {
+			if (c->pool[i]->busy)
+				continue;
+			buf = c->pool[i];
+			break;
+		}
+
+		buf = ecalloc(1, sizeof(Buffer) + (int)(c->geom.width * c->tbar_scale * 4 * (c->tbar_height + 2*tbar_borderpx)));
+		buf->image = drwl_image_create(NULL, (int)(c->geom.width * c->tbar_scale), c->tbar_height + 2*tbar_borderpx, buf->data);
+		wlr_buffer_init(&buf->base, &buffer_impl, (int)(c->geom.width * c->tbar_scale), c->tbar_height + 2*tbar_borderpx);
+		c->pool[i] = buf;
+		break;
+	}
+	if (!buf)
+		return NULL;
+
+	buf->busy = true;
+	LISTEN(&buf->base.events.release, &buf->release, bufrelease);
+	wlr_buffer_lock(&buf->base);
+	drwl_setimage(c->drw, buf->image);
+	return buf;
+}
+
+void
+bufdestroy(struct wlr_buffer *wlr_buffer)
+{
+	Buffer *buf = wl_container_of(wlr_buffer, buf, base);
+	if (buf->busy)
+		wl_list_remove(&buf->release.link);
+	drwl_image_destroy(buf->image);
+	free(buf);
+}
+
+bool
+bufdatabegin(struct wlr_buffer *wlr_buffer, uint32_t flags,
+		void **data, uint32_t *format, size_t *stride)
+{
+	Buffer *buf = wl_container_of(wlr_buffer, buf, base);
+
+	if (flags & WLR_BUFFER_DATA_PTR_ACCESS_WRITE) return false;
+
+	*data   = buf->data;
+	*stride = wlr_buffer->width * 4;
+	*format = DRM_FORMAT_ARGB8888;
+
+	return true;
+}
+
+void
+bufdataend(struct wlr_buffer *wlr_buffer)
+{
+}
+
+void
+bufrelease(struct wl_listener *listener, void *data)
+{
+	Buffer *buf = wl_container_of(listener, buf, release);
+	buf->busy = false;
+	wl_list_remove(&buf->release.link);
 }
 
 void
@@ -757,7 +876,7 @@ buttonpress(struct wl_listener *listener, void *data)
 	wlr_idle_notifier_v1_notify_activity(idle_notifier, seat);
 
 	switch (event->state) {
-	case WLR_BUTTON_PRESSED:
+	case WL_POINTER_BUTTON_STATE_PRESSED:
 		cursor_mode = CurPressed;
 		selmon = xytomon(cursor->x, cursor->y);
 		if (locked)
@@ -778,7 +897,7 @@ buttonpress(struct wl_listener *listener, void *data)
 			}
 		}
 		break;
-	case WLR_BUTTON_RELEASED:
+	case WL_POINTER_BUTTON_STATE_RELEASED:
 		/* If you released any buttons, we exit interactive move/resize mode. */
 		/* TODO should reset to the pointer focus's current setcursor */
 		if (!locked && cursor_mode != CurNormal && cursor_mode != CurPressed) {
@@ -994,11 +1113,25 @@ checkidleinhibitor(struct wlr_surface *exclude)
 void
 cleanup(void)
 {
+    Client *c;
 	size_t i;
+    wl_list_for_each(c, &clients, link) {
+        if (!c->tbar_enabled)
+            continue;
+        
+        for (i = 0; i < LENGTH(c->pool); i++)
+            wlr_buffer_drop(&c->pool[i]->base);
+        
+        drwl_setimage(c->drw, NULL);
+        drwl_destroy(c->drw);
+        
+        wlr_scene_node_destroy(&c->tbar_buffer->node);
+    }
 #ifdef XWAYLAND
 	wlr_xwayland_destroy(xwayland);
 	xwayland = NULL;
 #endif
+	wl_event_source_remove(menu_source);
 	wl_display_destroy_clients(dpy);
 
 	/* kill child processes */
@@ -1008,27 +1141,25 @@ cleanup(void)
 			waitpid(autostart_pids[i], NULL, 0);
 		}
 	}
-    shutdownexec();
-	for (i = 0; i < shutdown_len; i++) {
-		if (0 < shutdown_pids[i]) {
-			kill(shutdown_pids[i], SIGTERM);
-			waitpid(shutdown_pids[i], NULL, 0);
-		}
-	}
 
 	if (child_pid > 0) {
 		kill(-child_pid, SIGTERM);
 		waitpid(child_pid, NULL, 0);
 	}
 	wlr_xcursor_manager_destroy(cursor_mgr);
-	wlr_output_layout_destroy(output_layout);
 
 	destroykeyboardgroup(&kb_group->destroy, NULL);
+
+	/* If it's not destroyed manually it will cause a use-after-free of wlr_seat.
+	 * Destroy it until it's fixed in the wlroots side */
+	wlr_backend_destroy(backend);
 
 	wl_display_destroy(dpy);
 	/* Destroy after the wayland display (when the monitors are already destroyed)
 	   to avoid destroying them with an invalid scene output. */
 	wlr_scene_node_destroy(&scene->tree.node);
+
+	drwl_fini();
 }
 
 void
@@ -1097,6 +1228,20 @@ commitlayersurfacenotify(struct wl_listener *listener, void *data)
 	LayerSurface *l = wl_container_of(listener, l, surface_commit);
 	struct wlr_layer_surface_v1 *layer_surface = l->layer_surface;
 	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->current.layer]];
+	struct wlr_layer_surface_v1_state old_state;
+
+	if (l->layer_surface->initial_commit) {
+		wlr_fractional_scale_v1_notify_scale(layer_surface->surface, l->mon->wlr_output->scale);
+		wlr_surface_set_preferred_buffer_scale(layer_surface->surface, (int32_t)ceilf(l->mon->wlr_output->scale));
+
+		/* Temporarily set the layer's current state to pending
+		 * so that we can easily arrange it */
+		old_state = l->layer_surface->current;
+		l->layer_surface->current = l->layer_surface->pending;
+		arrangelayers(l->mon);
+		l->layer_surface->current = old_state;
+		return;
+	}
 
 	if (layer_surface->current.committed == 0 && l->mapped == layer_surface->surface->mapped)
 		return;
@@ -1126,9 +1271,17 @@ commitnotify(struct wl_listener *listener, void *data)
 		 * a wrong monitor.
 		 */
 		applyrules(c);
-		wlr_surface_set_preferred_buffer_scale(client_surface(c), (int)ceilf(c->mon->wlr_output->scale));
-		wlr_fractional_scale_v1_notify_scale(client_surface(c), c->mon->wlr_output->scale);
+		if (c->mon) {
+			wlr_surface_set_preferred_buffer_scale(client_surface(c), (int)ceilf(c->mon->wlr_output->scale));
+			wlr_fractional_scale_v1_notify_scale(client_surface(c), c->mon->wlr_output->scale);
+		}
 		setmon(c, NULL, 0); /* Make sure to reapply rules in mapnotify() */
+
+		wlr_xdg_toplevel_set_wm_capabilities(c->surface.xdg->toplevel, WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
+		wlr_xdg_toplevel_set_size(c->surface.xdg->toplevel, 0, 0);
+		if (c->decoration)
+			requestdecorationmode(&c->set_decoration_mode, c->decoration);
+		return;
 	}
 
 	if (client_surface(c)->mapped && c->mon)
@@ -1137,6 +1290,33 @@ commitnotify(struct wl_listener *listener, void *data)
 	/* mark a pending resize as completed */
 	if (c->resize && c->resize <= c->surface.xdg->current.configure_serial)
 		c->resize = 0;
+}
+
+void
+commitpopup(struct wl_listener *listener, void *data)
+{
+	struct wlr_surface *surface = data;
+	struct wlr_xdg_popup *popup = wlr_xdg_popup_try_from_wlr_surface(surface);
+	LayerSurface *l = NULL;
+	Client *c = NULL;
+	struct wlr_box box;
+	int type = -1;
+
+	if (!popup->base->initial_commit)
+		return;
+
+	type = toplevel_from_wlr_surface(popup->base->surface, &c, &l);
+	if (!popup->parent || type < 0)
+		return;
+	popup->base->surface->data = wlr_scene_xdg_surface_create(
+			popup->parent->data, popup->base);
+	if ((l && !l->mon) || (c && !c->mon))
+		return;
+	box = type == LayerShell ? l->mon->m : c->mon->w;
+	box.x -= (type == LayerShell ? l->geom.x : c->geom.x);
+	box.y -= (type == LayerShell ? l->geom.y : c->geom.y);
+	wlr_xdg_popup_unconstrain_from_box(popup, &box);
+	wl_list_remove(&listener->link);
 }
 
 void
@@ -1197,8 +1377,7 @@ createkeyboardgroup(void)
 	LISTEN(&group->wlr_group->keyboard.events.key, &group->key, keypress);
 	LISTEN(&group->wlr_group->keyboard.events.modifiers, &group->modifiers, keypressmod);
 
-	group->key_repeat_source = wl_event_loop_add_timer(
-			wl_display_get_event_loop(dpy), keyrepeat, group);
+	group->key_repeat_source = wl_event_loop_add_timer(event_loop, keyrepeat, group);
 
 	/* A seat can only have one keyboard, but this is a limitation of the
 	 * Wayland protocol - not wlroots. We assign all connected keyboards to the
@@ -1216,7 +1395,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 	LayerSurface *l;
 	struct wlr_surface *surface = layer_surface->surface;
 	struct wlr_scene_tree *scene_layer = layers[layermap[layer_surface->pending.layer]];
-	struct wlr_layer_surface_v1_state old_state;
 
 	if (!layer_surface->output
 			&& !(layer_surface->output = selmon ? selmon->wlr_output : NULL)) {
@@ -1240,17 +1418,6 @@ createlayersurface(struct wl_listener *listener, void *data)
 
 	wl_list_insert(&l->mon->layers[layer_surface->pending.layer],&l->link);
 	wlr_surface_send_enter(surface, layer_surface->output);
-	wlr_fractional_scale_v1_notify_scale(surface, l->mon->wlr_output->scale);
-	wlr_surface_set_preferred_buffer_scale(surface, (int32_t)ceilf(l->mon->wlr_output->scale));
-
-	/* Temporarily set the layer's current state to pending
-	 * so that we can easily arrange it
-	 */
-	old_state = layer_surface->current;
-	layer_surface->current = layer_surface->pending;
-	l->mapped = 1;
-	arrangelayers(l->mon);
-	layer_surface->current = old_state;
 }
 
 void
@@ -1278,11 +1445,11 @@ createmon(struct wl_listener *listener, void *data)
 	/* This event is raised by the backend when a new output (aka a display or
 	 * monitor) becomes available. */
 	struct wlr_output *wlr_output = data;
-	struct wlr_output_mode *mode = wl_container_of(wlr_output->modes.next, mode, link);
 	const MonitorRule *r;
 	size_t i;
 	struct wlr_output_state state;
 	Monitor *m;
+	Client *c;
 
 	if (!wlr_output_init_render(wlr_output, alloc, drw))
 		return;
@@ -1311,22 +1478,15 @@ createmon(struct wl_listener *listener, void *data)
 			strncpy(m->ltsymbol, m->lt[m->sellt]->symbol, LENGTH(m->ltsymbol));
 			wlr_output_state_set_scale(&state, r->scale);
 			wlr_output_state_set_transform(&state, r->rr);
-
-			wlr_output_state_set_adaptive_sync_enabled(&state, r->adaptive);
-
-			if(r->mode == -1)
-				wlr_output_state_set_custom_mode(&state, r->resx, r->resy,
-				(int) (r->rate > 0 ? r->rate * 1000 : 0));
-			else if (!wl_list_empty(&wlr_output->modes)) {
-				for (int j = 0; j < r->mode; j++) {
-					mode = wl_container_of(mode->link.next, mode, link);
-				}
-				wlr_output_state_set_mode(&state, mode);
-			}
-
 			break;
 		}
 	}
+
+	/* The mode is a tuple of (width, height, refresh rate), and each
+	 * monitor supports only a specific set of modes. We just pick the
+	 * monitor's preferred mode; a more sophisticated compositor would let
+	 * the user configure it. */
+	wlr_output_state_set_mode(&state, wlr_output_preferred_mode(wlr_output));
 
 	/* Set up event listeners */
 	LISTEN(&wlr_output->events.frame, &m->frame, rendermon);
@@ -1375,54 +1535,38 @@ createmon(struct wl_listener *listener, void *data)
 		wlr_output_layout_add_auto(output_layout, wlr_output);
 	else
 		wlr_output_layout_add(output_layout, wlr_output, m->m.x, m->m.y);
+
+	wl_list_for_each(c, &clients, link) {
+		if (strcmp(wlr_output->name, c->output) == 0) {
+			c->mon = m;
+		}
+	}
+	updatemons(NULL, NULL);
 }
 
 void
 createnotify(struct wl_listener *listener, void *data)
 {
-	/* This event is raised when wlr_xdg_shell receives a new xdg surface from a
-	 * client, either a toplevel (application window) or popup,
-	 * or when wlr_layer_shell receives a new popup from a layer.
-	 * If you want to do something tricky with popups you should check if
-	 * its parent is wlr_xdg_shell or wlr_layer_shell */
-	struct wlr_xdg_surface *xdg_surface = data;
+	/* This event is raised when a client creates a new toplevel (application window). */
+	struct wlr_xdg_toplevel *toplevel = data;
 	Client *c = NULL;
-	LayerSurface *l = NULL;
-
-	if (xdg_surface->role == WLR_XDG_SURFACE_ROLE_POPUP) {
-		struct wlr_xdg_popup *popup = xdg_surface->popup;
-		struct wlr_box box;
-		if (toplevel_from_wlr_surface(popup->base->surface, &c, &l) < 0)
-			return;
-		popup->base->surface->data = wlr_scene_xdg_surface_create(
-				popup->parent->data, popup->base);
-		if ((l && !l->mon) || (c && !c->mon))
-			return;
-		box = l ? l->mon->m : c->mon->w;
-		box.x -= (l ? l->geom.x : c->geom.x);
-		box.y -= (l ? l->geom.y : c->geom.y);
-		wlr_xdg_popup_unconstrain_from_box(popup, &box);
-		return;
-	} else if (xdg_surface->role == WLR_XDG_SURFACE_ROLE_NONE)
-		return;
 
 	/* Allocate a Client for this surface */
-	c = xdg_surface->data = ecalloc(1, sizeof(*c));
-	c->surface.xdg = xdg_surface;
+	c = toplevel->base->data = ecalloc(1, sizeof(*c));
+	c->surface.xdg = toplevel->base;
 	c->bw = borderpx;
+	c->tbar_enabled = 0;
+	c->resize_tbar_enabled = 0;
+	c->tbar_height = 0;
+	c->tbar_buffer = NULL;
 
-	wlr_xdg_toplevel_set_wm_capabilities(xdg_surface->toplevel,
-			WLR_XDG_TOPLEVEL_WM_CAPABILITIES_FULLSCREEN);
-
-	LISTEN(&xdg_surface->events.destroy, &c->destroy, destroynotify);
-	LISTEN(&xdg_surface->surface->events.commit, &c->commit, commitnotify);
-	LISTEN(&xdg_surface->surface->events.map, &c->map, mapnotify);
-	LISTEN(&xdg_surface->surface->events.unmap, &c->unmap, unmapnotify);
-	LISTEN(&xdg_surface->toplevel->events.request_fullscreen, &c->fullscreen,
-			fullscreennotify);
-	LISTEN(&xdg_surface->toplevel->events.request_maximize, &c->maximize,
-			maximizenotify);
-	LISTEN(&xdg_surface->toplevel->events.set_title, &c->set_title, updatetitle);
+	LISTEN(&toplevel->base->surface->events.commit, &c->commit, commitnotify);
+	LISTEN(&toplevel->base->surface->events.map, &c->map, mapnotify);
+	LISTEN(&toplevel->base->surface->events.unmap, &c->unmap, unmapnotify);
+	LISTEN(&toplevel->events.destroy, &c->destroy, destroynotify);
+	LISTEN(&toplevel->events.request_fullscreen, &c->fullscreen, fullscreennotify);
+	LISTEN(&toplevel->events.request_maximize, &c->maximize, maximizenotify);
+	LISTEN(&toplevel->events.set_title, &c->set_title, updatetitle);
 }
 
 void
@@ -1479,6 +1623,15 @@ createpointerconstraint(struct wl_listener *listener, void *data)
 }
 
 void
+createpopup(struct wl_listener *listener, void *data)
+{
+	/* This event is raised when a client (either xdg-shell or layer-shell)
+	 * creates a new popup. */
+	struct wlr_xdg_popup *popup = data;
+	LISTEN_STATIC(&popup->base->surface->events.commit, commitpopup);
+}
+
+void
 cursorconstrain(struct wlr_pointer_constraint_v1 *constraint)
 {
 	if (active_constraint == constraint)
@@ -1510,8 +1663,7 @@ cursorwarptohint(void)
 	double sy = active_constraint->current.cursor_hint.y;
 
 	toplevel_from_wlr_surface(active_constraint->surface, &c, NULL);
-	/* TODO: wlroots 0.18: https://gitlab.freedesktop.org/wlroots/wlroots/-/merge_requests/4478 */
-	if (c && (active_constraint->current.committed & WLR_POINTER_CONSTRAINT_V1_STATE_CURSOR_HINT )) {
+	if (c && active_constraint->current.cursor_hint.enabled) {
 		wlr_cursor_warp(cursor, NULL, sx + c->geom.x + c->bw, sy + c->geom.y + c->bw);
 		wlr_seat_pointer_warp(active_constraint->seat, sx, sy);
 	}
@@ -1521,6 +1673,7 @@ void
 destroydecoration(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, destroy_decoration);
+	c->decoration = NULL;
 
 	wl_list_remove(&c->destroy_decoration.link);
 	wl_list_remove(&c->set_decoration_mode.link);
@@ -1622,6 +1775,7 @@ destroynotify(struct wl_listener *listener, void *data)
 		wl_list_remove(&c->map.link);
 		wl_list_remove(&c->unmap.link);
 	}
+	free(c->output);
 	free(c);
 }
 
@@ -1820,28 +1974,37 @@ void
 dwl_ipc_output_set_layout(struct wl_client *client, struct wl_resource *resource, uint32_t index)
 {
 	DwlIpcOutput *ipc_output;
-	Monitor *monitor;
+	Client *c = NULL;
+	Monitor *monitor = NULL;
 
 	ipc_output = wl_resource_get_user_data(resource);
 	if (!ipc_output)
 		return;
-
 	monitor = ipc_output->mon;
+
+	if (monitor != selmon)
+		c = focustop(selmon);
+
 	if (index >= LENGTH(layouts))
 		return;
-	if (index != monitor->lt[monitor->sellt] - layouts)
-		monitor->sellt ^= 1;
 
-	monitor->lt[monitor->sellt] = &layouts[index];
-	arrange(monitor);
-	printstatus();
+	if (c) {
+		monitor = selmon;
+		selmon = ipc_output->mon;
+	}
+	setlayout(&(Arg){.v = &layouts[index]});
+	if (c) {
+		selmon = monitor;
+		focusclient(c, 0);
+	}
 }
 
 void
 dwl_ipc_output_set_tags(struct wl_client *client, struct wl_resource *resource, uint32_t tagmask, uint32_t toggle_tagset)
 {
 	DwlIpcOutput *ipc_output;
-	Monitor *monitor;
+	Client *c = NULL;
+	Monitor *monitor = NULL;
 	unsigned int newtags = tagmask & TAGMASK;
 
 	ipc_output = wl_resource_get_user_data(resource);
@@ -1849,22 +2012,193 @@ dwl_ipc_output_set_tags(struct wl_client *client, struct wl_resource *resource, 
 		return;
 	monitor = ipc_output->mon;
 
-	if (!newtags || newtags == monitor->tagset[monitor->seltags])
-		return;
-	if (toggle_tagset)
-		monitor->seltags ^= 1;
+	if (monitor != selmon)
+		c = focustop(selmon);
 
-	monitor->tagset[monitor->seltags] = newtags;
-	if (selmon == monitor)
-		focusclient(focustop(monitor), 1);
-	arrange(monitor);
-	printstatus();
+	if (!newtags)
+		return;
+
+	/* view toggles seltags for us so we un-toggle it */
+	if (!toggle_tagset) {
+		monitor->seltags ^= 1;
+		monitor->tagset[monitor->seltags] = 0;
+	}
+
+	if (c) {
+		monitor = selmon;
+		selmon = ipc_output->mon;
+	}
+	view(&(Arg){.ui = newtags});
+	if (c) {
+		selmon = monitor;
+		focusclient(c, 0);
+	}
 }
 
 void
 dwl_ipc_output_release(struct wl_client *client, struct wl_resource *resource)
 {
 	wl_resource_destroy(resource);
+}
+
+void
+drawtbars(Monitor *m, int floating, int clients_changed)
+{
+	unsigned int tbar_type, tbar_only_top, len = 0;
+	int nodraw = 0, ismonocle;
+	Client *c, *sel = NULL, *sel_in_layout = NULL;
+
+	if (!m)
+		return;
+
+	tbar_type = floating ? floating_tbar_type : m->lt[m->sellt]->tbar_type;
+	tbar_only_top = floating ? floating_tbar_only_top : m->lt[m->sellt]->tbar_only_top;
+	ismonocle = m->lt[m->sellt]->arrange == monocle;
+
+	if (!clients_changed && !floating && ismonocle && (sel = focustop_onlytiled(m, 1))) {
+		wlr_scene_node_raise_to_top(&sel->scene->node);
+		if (sel->tbar_buffer)
+			wlr_scene_node_raise_to_top(&sel->tbar_buffer->node);
+		return;
+	}
+	
+	if (tbar_type == TBarNone)
+		nodraw = 2;
+
+	if (!nodraw) {
+		wl_list_for_each(c, &fstack, flink) {
+			if (!VISIBLEON(c, m))
+				continue;
+			if (!sel && (!tbar_float_sel_sep || c->isfloating == floating))
+				sel = c;
+			if (!sel_in_layout && c->isfloating == floating)
+				sel_in_layout = c;
+			if (c->isfloating == floating && !c->isfullscreen)
+				len++;
+		}
+
+		if (len == 0)
+			return;
+	}
+
+	if (tbar_type == TBarMultiple && len <= 1)
+		nodraw = 2;
+
+	wl_list_for_each(c, &fstack, flink) {
+		if (!VISIBLEON(c, m) || c->isfloating != floating)
+			continue;
+		if (c->tbar_buffer && c->tbar_enabled && (nodraw == 2 || c->isfullscreen)) {
+			wlr_scene_node_set_enabled(&c->tbar_buffer->node, 0);
+			c->tbar_enabled = 0;
+			if (m->lt[m->sellt]->arrange != tile)
+				resize(c, c->geom, 0);
+		}
+		if (!nodraw && !c->isfullscreen) {
+			drawtbar(c, tbar_type, len, ismonocle ? c : sel_in_layout, sel_in_layout);
+			if (!ismonocle && tbar_only_top)
+				nodraw = 1;
+		}
+		if (c == sel_in_layout) {
+			wlr_scene_node_raise_to_top(&sel_in_layout->scene->node);
+			if (sel_in_layout->tbar_buffer)
+				wlr_scene_node_raise_to_top(&sel_in_layout->tbar_buffer->node);
+		}
+	}
+
+	if (m->lt[m->sellt]->arrange == tile)
+		m->lt[m->sellt]->arrange(m);
+}
+
+void
+drawtbar(Client *c, unsigned int tbar_type, unsigned int len, Client *sel, Client *sel_in_layout)
+{
+	Buffer *buf;
+	float width = c->geom.width * c->tbar_scale;
+	unsigned int i, scheme;
+	Client *l;
+	uint32_t tbar_border_colors[][3] = {
+		[SchemeNorm] = { [ColBg] = tbar_colors[SchemeNorm][2] },
+		[SchemeSel] = { [ColBg] = tbar_colors[SchemeSel][2] },
+		[SchemeUrg] = { [ColBg] = tbar_colors[SchemeUrg][2] }
+	};
+
+	if (!c->tbar_buffer)
+		c->tbar_buffer = wlr_scene_buffer_create(c->scene, NULL);
+
+	for (i = 0; i < LENGTH(c->pool); i++) {
+		if (c->pool[i]) {
+			wlr_buffer_drop(&c->pool[i]->base);
+			c->pool[i] = NULL;
+		}
+	}
+	drwl_setimage(c->drw, NULL);
+
+	if (!(buf = bufclient(c)))
+		return;
+
+	switch (tbar_type) {
+		case TBarLabel:
+			scheme = c->isurgent ? SchemeUrg : (c == sel ? SchemeSel : SchemeNorm);
+
+			if (tbar_borderpx) {
+				drwl_setscheme(c->drw, tbar_border_colors[scheme]);
+				drwl_rect(c->drw, 0, 0, (unsigned int)width, tbar_borderpx, 1, 1);
+				drwl_rect(c->drw, 0, c->tbar_height + tbar_borderpx, (unsigned int)width, tbar_borderpx, 1, 1);
+				drwl_rect(c->drw, 0, tbar_borderpx, tbar_borderpx, c->tbar_height, 1, 1);
+				drwl_rect(c->drw, (unsigned int)width - tbar_borderpx, tbar_borderpx, tbar_borderpx, c->tbar_height, 1, 1);
+			}
+
+			drwl_setscheme(c->drw, tbar_colors[scheme]);
+			drwl_text(c->drw, tbar_borderpx, tbar_borderpx,
+				(unsigned int)width - 2*tbar_borderpx, c->tbar_height,
+				tbar_padding, client_get_title(c), 0);
+
+			break;
+
+		case TBarMultiple:
+		case TBarAlways:
+			width /= len;
+			i = 0;
+
+			wl_list_for_each(l, &clients, link) {
+				if (!VISIBLEON(l, c->mon) || l->isfullscreen || l->isfloating != c->isfloating)
+					continue;
+
+				scheme = l->isurgent ? SchemeUrg : (l == sel ? SchemeSel : SchemeNorm);
+
+				if (tbar_borderpx) {
+					drwl_setscheme(c->drw, tbar_border_colors[scheme]);
+					drwl_rect(c->drw, (unsigned int)(width*i), 0, (unsigned int)width, tbar_borderpx, 1, 1);
+					drwl_rect(c->drw, (unsigned int)(width*i), c->tbar_height + tbar_borderpx,
+			   			(unsigned int)width, tbar_borderpx, 1, 1);
+					drwl_rect(c->drw, (unsigned int)(width*i), tbar_borderpx, tbar_borderpx, c->tbar_height, 1, 1);
+					if (i == len-1)
+						drwl_rect(c->drw, (unsigned int)(width*(i+1)) - tbar_borderpx, tbar_borderpx,
+							tbar_borderpx, c->tbar_height + 2*tbar_borderpx, 1, 1);
+				}
+
+				drwl_setscheme(c->drw, tbar_colors[scheme]);
+				drwl_text(c->drw, (unsigned int)(width*i) + tbar_borderpx, tbar_borderpx,
+					(unsigned int)width - (i == len-1 ? 2*tbar_borderpx : tbar_borderpx),
+					c->tbar_height, tbar_padding, client_get_title(l), 0);
+
+				i += 1;
+			}
+
+			break;
+	}
+
+	c->tbar_enabled = 1;
+	if (!c->resize_tbar_enabled)
+		resize(c, c->geom, 0);
+
+	wlr_scene_buffer_set_dest_size(c->tbar_buffer, c->geom.width,
+						c->tbar_real_height + 2*tbar_borderpx);
+	wlr_scene_node_set_position(&c->tbar_buffer->node, 0, tbar_top ? 0
+						: (c->geom.height - c->tbar_real_height - 2*tbar_borderpx));
+	wlr_scene_buffer_set_buffer(c->tbar_buffer, &buf->base);
+	wlr_scene_node_set_enabled(&c->tbar_buffer->node, 1);
+	wlr_buffer_unlock(&buf->base);
 }
 
 void
@@ -1902,13 +2236,13 @@ focusclient(Client *c, int lift)
 		/* Don't change border color if there is an exclusive focus or we are
 		 * handling a drag operation */
 		if (!exclusive_focus && !seat->drag)
-			client_set_border_color(c, focuscolor);
+			client_set_border_color(c, (float[])COLOR(colors[SchemeSel][ColBorder]));
 	}
 
 	/* Deactivate old client if focus is changing */
 	if (old && (!c || client_surface(c) != old)) {
 		/* If an overlay is focused, don't focus or activate the client,
-		 * but only update its position in fstack to render its border with focuscolor
+		 * but only update its position in fstack to render its border with its color
 		 * and focus it after the overlay is closed. */
 		if (old_client_type == LayerShell && wlr_scene_node_coords(
 					&old_l->scene->node, &unused_lx, &unused_ly)
@@ -1919,11 +2253,17 @@ focusclient(Client *c, int lift)
 		/* Don't deactivate old client if the new one wants focus, as this causes issues with winecfg
 		 * and probably other clients */
 		} else if (old_c && !client_is_unmanaged(old_c) && (!c || !client_wants_focus(c))) {
-			client_set_border_color(old_c, bordercolor);
+			client_set_border_color(old_c, (float[])COLOR(colors[SchemeNorm][ColBorder]));
 
 			client_activate_surface(old, 0);
+			if (old_c->foreign_toplevel)
+				wlr_foreign_toplevel_handle_v1_set_activated(old_c->foreign_toplevel, 0);
 		}
 	}
+    if (c && c->mon)
+        drawtbars(c->mon, c->isfloating, 0);
+    if (c && old_c && old_c->mon && (old_c->mon != c->mon || old_c->isfloating != c->isfloating))
+        drawtbars(old_c->mon, old_c->isfloating, 0);
 	printstatus();
 
 	if (!c) {
@@ -1940,6 +2280,8 @@ focusclient(Client *c, int lift)
 
 	/* Activate the new client */
 	client_activate_surface(client_surface(c), 1);
+	if (c->foreign_toplevel)
+		wlr_foreign_toplevel_handle_v1_set_activated(c->foreign_toplevel, 1);
 }
 
 void
@@ -1959,7 +2301,7 @@ focusstack(const Arg *arg)
 {
 	/* Focus the next or previous client (in tiling order) on selmon */
 	Client *c, *sel = focustop(selmon);
-	if (!sel || sel->isfullscreen)
+	if (!sel || (sel->isfullscreen && !client_has_children(sel)))
 		return;
 	if (arg->i > 0) {
 		wl_list_for_each(c, &sel->link, link) {
@@ -1994,11 +2336,49 @@ focustop(Monitor *m)
 	return NULL;
 }
 
+Client *
+focustop_onlytiled(Monitor *m, int onlytiled)
+{
+	Client *c;
+	wl_list_for_each(c, &fstack, flink) {
+		if (VISIBLEON(c, m)) {
+			if ((onlytiled == 1 && c->isfloating) || (onlytiled == 2 && !c->isfloating && m->lt[m->sellt]->arrange))
+				continue;
+			return c;
+		}
+	}
+	return NULL;
+}
+
 void
 fullscreennotify(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, fullscreen);
 	setfullscreen(c, client_wants_fullscreen(c));
+}
+
+void
+gpureset(struct wl_listener *listener, void *data)
+{
+	struct wlr_renderer *old_drw = drw;
+	struct wlr_allocator *old_alloc = alloc;
+	struct Monitor *m;
+	if (!(drw = wlr_renderer_autocreate(backend)))
+		die("couldn't recreate renderer");
+
+	if (!(alloc = wlr_allocator_autocreate(backend, drw)))
+		die("couldn't recreate allocator");
+
+	LISTEN_STATIC(&drw->events.lost, gpureset);
+
+	wlr_compositor_set_renderer(compositor, drw);
+
+	wl_list_for_each(m, &mons, link) {
+		wlr_output_init_render(m->wlr_output, alloc, drw);
+	}
+
+	wlr_allocator_destroy(old_alloc);
+	wlr_renderer_destroy(old_drw);
 }
 
 void
@@ -2099,6 +2479,7 @@ incnmaster(const Arg *arg)
 		return;
 	selmon->nmaster = selmon->pertag->nmasters[selmon->pertag->curtag] = MAX(selmon->nmaster + arg->i, 0);
 	arrange(selmon);
+	drawtbars(selmon, 0, 0);
 }
 
 void
@@ -2205,7 +2586,7 @@ keypress(struct wl_listener *listener, void *data)
 #endif
 		;
 	/* passed keys don't get repeated */
-	if (pass)
+	if (pass && syms)
 		keypressglobal(last_surface, &group->wlr_group->keyboard, event, mods, syms[0]);
 
 	wlr_seat_set_keyboard(seat, &group->wlr_group->keyboard);
@@ -2313,9 +2694,11 @@ void
 mapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is mapped, or ready to display on-screen. */
-	Client *p, *w, *c = wl_container_of(listener, c, map);
+	Client *p = NULL;
+	Client *w, *c = wl_container_of(listener, c, map);
 	Monitor *m;
 	int i;
+	char fontattrs[12];
 
 	/* Create scene tree for this client and its border */
 	c->scene = client_surface(c)->data = wlr_scene_tree_create(layers[LyrTile]);
@@ -2341,9 +2724,11 @@ mapnotify(struct wl_listener *listener, void *data)
 
 	for (i = 0; i < 4; i++) {
 		c->border[i] = wlr_scene_rect_create(c->scene, 0, 0,
-				c->isurgent ? urgentcolor : bordercolor);
+			(float[])COLOR(colors[c->isurgent ? SchemeUrg : SchemeNorm][ColBorder]));
 		c->border[i]->node.data = c;
 	}
+
+	createforeigntoplevel(c);
 
 	/* Initialize client geometry with room for border */
 	client_set_tiled(c, WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
@@ -2364,14 +2749,33 @@ mapnotify(struct wl_listener *listener, void *data)
 	} else {
 		applyrules(c);
 	}
+	c->output = strdup(c->mon->wlr_output->name);
+	if (c->output == NULL) {
+		die("oom");
+	}
+
 	printstatus();
 
 unset_fullscreen:
 	m = c->mon ? c->mon : xytomon(c->geom.x, c->geom.y);
 	wl_list_for_each(w, &clients, link) {
-		if (w != c && w->isfullscreen && m == w->mon && (w->tags & c->tags))
+		if (w != c && w != p && w->isfullscreen && m == w->mon && (w->tags & c->tags))
 			setfullscreen(w, 0);
 	}
+
+	if (!(c->drw = drwl_create()))
+		die("failed to create drwl context");
+	c->tbar_scale = tbar_scale > 0 ? tbar_scale : m->wlr_output->scale;
+	snprintf(fontattrs, sizeof(fontattrs), "dpi=%.2f", 96. * c->tbar_scale);
+	if (!(drwl_font_create(c->drw, LENGTH(tbar_fonts), tbar_fonts, fontattrs)))
+		die("Could not load font");
+	if (!c->tbar_height) {
+		c->tbar_height = c->drw->font->height;
+		if (tbar_height > c->tbar_height)
+			c->tbar_height = tbar_height;
+		c->tbar_real_height = (int)((float)c->tbar_height / c->tbar_scale);
+	}
+	drawtbars(c->mon, c->isfloating, 1);
 }
 
 void
@@ -2386,61 +2790,168 @@ maximizenotify(struct wl_listener *listener, void *data)
 	 * protocol version
 	 * wlr_xdg_surface_schedule_configure() is used to send an empty reply. */
 	Client *c = wl_container_of(listener, c, maximize);
-	if (wl_resource_get_version(c->surface.xdg->toplevel->resource)
-			< XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION)
+	if (c->surface.xdg->initialized
+			&& wl_resource_get_version(c->surface.xdg->toplevel->resource)
+					< XDG_TOPLEVEL_WM_CAPABILITIES_SINCE_VERSION)
 		wlr_xdg_surface_schedule_configure(c->surface.xdg);
+}
+
+void
+menu(const Arg *arg)
+{
+	FILE *f;
+	pid_t pid;
+	int fd_right[2], fd_left[2];
+
+	if (!selmon || menu_pid != 0)
+		return;
+
+	menu_current = arg->v;
+
+	if (pipe(fd_right) == -1 || pipe(fd_left) == -1)
+		return;
+	if ((pid = fork()) == -1)
+		return;
+	if (pid == 0) {
+		close(fd_right[1]);
+		close(fd_left[0]);
+		dup2(fd_right[0], STDIN_FILENO);
+		close(fd_right[0]);
+		dup2(fd_left[1], STDOUT_FILENO);
+		close(fd_left[1]);
+
+		execl("/bin/sh", "/bin/sh", "-c", menu_current->cmd, NULL);
+		die("dwl: execl %s failed:", "/bin/sh");
+	}
+
+	close(fd_right[0]);
+	close(fd_left[1]);
+
+	if (!(f = fdopen(fd_right[1], "w")))
+		return;
+	menu_current->feed(f);
+	fclose(f);
+
+	menu_pid = pid;
+	menu_fd = fd_left[0];
+	wl_event_source_timer_update(menu_source, 10);
+}
+
+int
+menuloop(void *data)
+{
+	FILE *f;
+	pid_t pid;
+	char line[256], *s;
+
+	/* If process is still running, wait for another 50 ms */
+	if ((pid = waitpid(menu_pid, NULL, WNOHANG)) == 0) {
+		wl_event_source_timer_update(menu_source, 10);
+		return 0;
+	}
+
+	menu_pid = 0;
+
+	if (!(f = fdopen(menu_fd, "r")))
+		return 0;
+	if (fgets(line, sizeof(line), f)) {
+		if ((s = strchr(line, '\n')))
+			*s = '\0';
+		menu_current->action(line);
+	}
+	fclose(f);
+	return 0;
+}
+
+void
+menuwinfeed(FILE *f)
+{
+	Client *c;
+	const char *title;
+
+	wl_list_for_each(c, &fstack, flink) {
+		if (!(title = client_get_title(c)))
+			continue;
+		fprintf(f, "%s\n", title);
+	}
+}
+
+void
+menuwinaction(char *line)
+{
+	Client *c;
+	Monitor *prevm = selmon;
+	const char *title;
+
+	if (!selmon)
+		return;
+
+	wl_list_for_each(c, &fstack, flink) {
+		if (!(title = client_get_title(c)))
+			continue;
+		if (strcmp(line, title) == 0)
+			goto found;
+	}
+	return;
+
+found:
+	focusclient(c, 1);
+	wlr_cursor_move(cursor, NULL, selmon->m.x - prevm->m.x , 0);
+	selmon->seltags ^= 1; /* toggle sel tagset */
+	selmon->tagset[selmon->seltags] = c->tags;
+	arrange(selmon);
+	printstatus();
+}
+
+void
+menulayoutfeed(FILE *f)
+{
+	unsigned int i;
+	for (i = 0; i < LENGTH(layouts); i++)
+		fprintf(f, "%s\n", layouts[i].symbol);
+}
+
+void
+menulayoutaction(char *line)
+{
+	unsigned int i;
+	Arg a;
+	for (i = 0; i < LENGTH(layouts); i++)
+		if (strcmp(line, layouts[i].symbol) == 0)
+			goto found;
+	return;
+
+found:
+	a.v = &layouts[i];
+	setlayout(&a);
 }
 
 void
 monocle(Monitor *m)
 {
 	Client *c;
-	int n = 0;
+	int n = 0, old_tbar_enabled;
 
 	wl_list_for_each(c, &clients, link) {
 		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
 			continue;
-		resize(c, m->w, 0);
+		if (!n)
+			wlr_scene_node_raise_to_top(&c->scene->node);
 		n++;
+		if (n > 1)
+			break;
+	}
+	wl_list_for_each(c, &fstack, flink) {
+		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
+			continue;
+		old_tbar_enabled = c->tbar_enabled;
+		c->tbar_enabled = m->lt[m->sellt]->tbar_type != TBarNone
+			&& m->lt[m->sellt]->tbar_type == TBarMultiple ? n > 1 : 1;
+		resize(c, m->w, 0);
+		c->tbar_enabled = old_tbar_enabled;
 	}
 	if (n)
 		snprintf(m->ltsymbol, LENGTH(m->ltsymbol), "[%d]", n);
-	if ((c = focustop(m)))
-		wlr_scene_node_raise_to_top(&c->scene->node);
-}
-
-void
-movestack(const Arg *arg)
-{
-    Client *c, *sel = focustop(selmon);
-
-    if (!sel) {
-        return;
-    }
-
-    if (wl_list_length(&clients) <= 1) {
-        return;
-    }
-
-    if (arg->i > 0) {
-        wl_list_for_each(c, &sel->link, link) {
-            if (VISIBLEON(c, selmon) || &c->link == &clients) {
-                break; /* found it */
-            }
-        }
-    } else {
-        wl_list_for_each_reverse(c, &sel->link, link) {
-            if (VISIBLEON(c, selmon) || &c->link == &clients) {
-                break; /* found it */
-            }
-        }
-        /* backup one client */
-        c = wl_container_of(c->link.prev, c, link);
-    }
-
-    wl_list_remove(&sel->link);
-    wl_list_insert(&c->link, &sel->link);
-    arrange(selmon);
 }
 
 void
@@ -2695,8 +3206,41 @@ void
 printstatus(void)
 {
 	Monitor *m = NULL;
-    wl_list_for_each(m, &mons, link) 
-        dwl_ipc_output_printstatus(m);
+	Client *c;
+	uint32_t occ, urg, sel;
+	const char *appid, *title;
+
+	wl_list_for_each(m, &mons, link) {
+		occ = urg = 0;
+		wl_list_for_each(c, &clients, link) {
+			if (c->mon != m)
+				continue;
+			occ |= c->tags;
+			if (c->isurgent)
+				urg |= c->tags;
+		}
+		if ((c = focustop(m))) {
+			title = client_get_title(c);
+			appid = client_get_appid(c);
+			printf("%s title %s\n", m->wlr_output->name, title ? title : broken);
+			printf("%s appid %s\n", m->wlr_output->name, appid ? appid : broken);
+			printf("%s fullscreen %d\n", m->wlr_output->name, c->isfullscreen);
+			printf("%s floating %d\n", m->wlr_output->name, c->isfloating);
+			sel = c->tags;
+		} else {
+			printf("%s title \n", m->wlr_output->name);
+			printf("%s appid \n", m->wlr_output->name);
+			printf("%s fullscreen \n", m->wlr_output->name);
+			printf("%s floating \n", m->wlr_output->name);
+			sel = 0;
+		}
+
+		printf("%s selmon %u\n", m->wlr_output->name, m == selmon);
+		printf("%s tags %"PRIu32" %"PRIu32" %"PRIu32" %"PRIu32"\n",
+			m->wlr_output->name, occ, m->tagset[m->seltags], sel, urg);
+		printf("%s layout %s\n", m->wlr_output->name, m->ltsymbol);
+	}
+	fflush(stdout);
 }
 
 void
@@ -2778,8 +3322,9 @@ void
 requestdecorationmode(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, set_decoration_mode);
-	wlr_xdg_toplevel_decoration_v1_set_mode(c->decoration,
-			WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+	if (c->surface.xdg->initialized)
+		wlr_xdg_toplevel_decoration_v1_set_mode(c->decoration,
+				WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
 }
 
 void
@@ -2807,11 +3352,14 @@ resize(Client *c, struct wlr_box geo, int interact)
 {
 	struct wlr_box *bbox;
 	struct wlr_box clip;
+	unsigned int th;
 
-	if (!c->mon || !c->scene)
+	if (!c->mon || !client_surface(c)->mapped)
 		return;
 
 	bbox = interact ? &sgeom : &c->mon->w;
+
+	th = c->tbar_enabled ? (unsigned int)(c->tbar_real_height + 2*tbar_borderpx) : c->bw;
 
 	client_set_bounds(c, geo.width, geo.height);
 	c->geom = geo;
@@ -2819,20 +3367,22 @@ resize(Client *c, struct wlr_box geo, int interact)
 
 	/* Update scene-graph, including borders */
 	wlr_scene_node_set_position(&c->scene->node, c->geom.x, c->geom.y);
-	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, c->bw);
-	wlr_scene_rect_set_size(c->border[0], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[1], c->geom.width, c->bw);
-	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - 2 * c->bw);
-	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - 2 * c->bw);
+	wlr_scene_node_set_position(&c->scene_surface->node, c->bw, tbar_top ? th : c->bw);
+	wlr_scene_rect_set_size(c->border[0], c->geom.width, (c->tbar_enabled && tbar_top) ? 0 : c->bw);
+	wlr_scene_rect_set_size(c->border[1], c->geom.width, (c->tbar_enabled && !tbar_top) ? 0 : c->bw);
+	wlr_scene_rect_set_size(c->border[2], c->bw, c->geom.height - th - c->bw);
+	wlr_scene_rect_set_size(c->border[3], c->bw, c->geom.height - th - c->bw);
 	wlr_scene_node_set_position(&c->border[1]->node, 0, c->geom.height - c->bw);
-	wlr_scene_node_set_position(&c->border[2]->node, 0, c->bw);
-	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, c->bw);
+	wlr_scene_node_set_position(&c->border[2]->node, 0, tbar_top ? th : c->bw);
+	wlr_scene_node_set_position(&c->border[3]->node, c->geom.width - c->bw, tbar_top ? th : c->bw);
 
 	/* this is a no-op if size hasn't changed */
 	c->resize = client_set_size(c, c->geom.width - 2 * c->bw,
-			c->geom.height - 2 * c->bw);
+			c->geom.height - th - c->bw);
 	client_get_clip(c, &clip);
 	wlr_scene_subsurface_tree_set_clip(&c->scene_surface->node, &clip);
+
+	c->resize_tbar_enabled = c->tbar_enabled;
 }
 
 void
@@ -2932,14 +3482,18 @@ setcursorshape(struct wl_listener *listener, void *data)
 void
 setfloating(Client *c, int floating)
 {
+	Client *p = client_get_parent(c);
 	c->isfloating = floating;
 	/* If in floating layout do not change the client's layer */
 	if (!c->mon || !client_surface(c)->mapped || !c->mon->lt[c->mon->sellt]->arrange)
 		return;
-	wlr_scene_node_reparent(&c->scene->node, layers[c->isfullscreen
-			? LyrFS : c->isfloating ? LyrFloat : LyrTile]);
+	wlr_scene_node_reparent(&c->scene->node, layers[c->isfullscreen ||
+			(p && p->isfullscreen) ? LyrFS
+			: c->isfloating ? LyrFloat : LyrTile]);
 	arrange(c->mon);
 	printstatus();
+	drawtbars(c->mon, 0, 1);
+	drawtbars(c->mon, 1, 1);
 }
 
 void
@@ -2963,6 +3517,7 @@ setfullscreen(Client *c, int fullscreen)
 	}
 	arrange(c->mon);
 	printstatus();
+	drawtbars(c->mon, c->isfloating, 1);
 }
 
 void
@@ -2988,6 +3543,7 @@ setlayout(const Arg *arg)
 	strncpy(selmon->ltsymbol, selmon->lt[selmon->sellt]->symbol, LENGTH(selmon->ltsymbol));
 	arrange(selmon);
 	printstatus();
+	drawtbars(selmon, 0, 1);
 }
 
 /* arg > 1.0 will set mfact absolutely */
@@ -3003,6 +3559,7 @@ setmfact(const Arg *arg)
 		return;
 	selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag] = f;
 	arrange(selmon);
+	drawtbars(selmon, 0, 0);
 }
 
 void
@@ -3016,12 +3573,17 @@ setmon(Client *c, Monitor *m, uint32_t newtags)
 	c->prev = c->geom;
 
 	/* Scene graph sends surface leave/enter events on move and resize */
-	if (oldmon)
+	if (oldmon) {
+		if (c->foreign_toplevel)
+			wlr_foreign_toplevel_handle_v1_output_leave(c->foreign_toplevel, oldmon->wlr_output);
 		arrange(oldmon);
+	}
 	if (m) {
 		/* Make sure window actually overlaps with the monitor */
 		resize(c, c->geom, 0);
 		c->tags = newtags ? newtags : m->tagset[m->seltags]; /* assign tags of target monitor */
+		if (c->foreign_toplevel)
+			wlr_foreign_toplevel_handle_v1_output_enter(c->foreign_toplevel, m->wlr_output);
 		setfullscreen(c, c->isfullscreen); /* This will call arrange(c->mon) */
 		setfloating(c, c->isfloating);
 	}
@@ -3065,12 +3627,13 @@ setup(void)
 	/* The Wayland display is managed by libwayland. It handles accepting
 	 * clients from the Unix socket, manging Wayland globals, and so on. */
 	dpy = wl_display_create();
+	event_loop = wl_display_get_event_loop(dpy);
 
 	/* The backend is a wlroots feature which abstracts the underlying input and
 	 * output hardware. The autocreate option will choose the most suitable
 	 * backend based on the current environment, such as opening an X11 window
 	 * if an X11 server is running. */
-	if (!(backend = wlr_backend_autocreate(dpy, &session)))
+	if (!(backend = wlr_backend_autocreate(event_loop, &session)))
 		die("couldn't create backend");
 
 	/* Initialize the scene graph used to lay out windows */
@@ -3087,6 +3650,7 @@ setup(void)
 	 * supports for shared memory, this configures that for clients. */
 	if (!(drw = wlr_renderer_autocreate(backend)))
 		die("couldn't create renderer");
+	LISTEN_STATIC(&drw->events.lost, gpureset);
 
 	/* Create shm, drm and linux_dmabuf interfaces by ourselves.
 	 * The simplest way is call:
@@ -3095,10 +3659,10 @@ setup(void)
 	 * with wlr_scene. */
 	wlr_renderer_init_wl_shm(drw, dpy);
 
-	if (wlr_renderer_get_dmabuf_texture_formats(drw)) {
+	if (wlr_renderer_get_texture_formats(drw, WLR_BUFFER_CAP_DMABUF)) {
 		wlr_drm_create(dpy, drw);
 		wlr_scene_set_linux_dmabuf_v1(scene,
-				wlr_linux_dmabuf_v1_create_with_renderer(dpy, 4, drw));
+				wlr_linux_dmabuf_v1_create_with_renderer(dpy, 5, drw));
 	}
 
 	/* Autocreates an allocator for us.
@@ -3124,6 +3688,8 @@ setup(void)
 	wlr_viewporter_create(dpy);
 	wlr_single_pixel_buffer_manager_v1_create(dpy);
 	wlr_fractional_scale_manager_v1_create(dpy, 1);
+	wlr_presentation_create(dpy, backend);
+	wlr_alpha_modifier_v1_create(dpy);
 
 	/* Initializes the interface used to implement urgency hints */
 	activation = wlr_xdg_activation_v1_create(dpy);
@@ -3135,9 +3701,12 @@ setup(void)
 	power_mgr = wlr_output_power_manager_v1_create(dpy);
 	LISTEN_STATIC(&power_mgr->events.set_mode, powermgrsetmode);
 
+	/* Initializes foreign toplevel management */
+	foreign_toplevel_mgr = wlr_foreign_toplevel_manager_v1_create(dpy);
+
 	/* Creates an output layout, which a wlroots utility for working with an
 	 * arrangement of screens in a physical layout. */
-	output_layout = wlr_output_layout_create();
+	output_layout = wlr_output_layout_create(dpy);
 	LISTEN_STATIC(&output_layout->events.change, updatemons);
 	wlr_xdg_output_manager_v1_create(dpy, output_layout);
 
@@ -3156,7 +3725,8 @@ setup(void)
 	wl_list_init(&fstack);
 
 	xdg_shell = wlr_xdg_shell_create(dpy, 6);
-	LISTEN_STATIC(&xdg_shell->events.new_surface, createnotify);
+	LISTEN_STATIC(&xdg_shell->events.new_toplevel, createnotify);
+	LISTEN_STATIC(&xdg_shell->events.new_popup, createpopup);
 
 	layer_shell = wlr_layer_shell_v1_create(dpy, 3);
 	LISTEN_STATIC(&layer_shell->events.new_surface, createlayersurface);
@@ -3258,14 +3828,18 @@ setup(void)
 	LISTEN_STATIC(&output_mgr->events.apply, outputmgrapply);
 	LISTEN_STATIC(&output_mgr->events.test, outputmgrtest);
 
-	wlr_scene_set_presentation(scene, wlr_presentation_create(dpy, backend));
-
 	wl_global_create(dpy, &zdwl_ipc_manager_v2_interface, 2, NULL, dwl_ipc_manager_bind);
+
+	drwl_init();
 
 	/* Make sure XWayland clients don't connect to the parent X server,
 	 * e.g when running in the x11 backend or the wayland backend and the
 	 * compositor has Xwayland support */
 	unsetenv("DISPLAY");
+
+	menu_source = wl_event_loop_add_timer(
+			wl_display_get_event_loop(dpy), menuloop, NULL);
+
 #ifdef XWAYLAND
 	/*
 	 * Initialise the XWayland X server.
@@ -3293,14 +3867,12 @@ snail(Monitor *m)
 	wl_list_for_each(c, &clients, link)
 		if (VISIBLEON(c, m) && !c->isfloating && !c->isfullscreen)
 			n++;
-	if (n == 0)
-		return;
-  if (smartgaps == n)
-		e = 0;
-	egappx = e * gappx;
+	if (smartgaps == n)
+       e = 0;
+    egappx = e * gappx;
 
 	if (n > m->nmaster)
-		mw = m->nmaster ? (unsigned int)round((m->w.width + egappx) * m->mfact) : 0;
+		mw = m->nmaster ? (int)round((m->w.width + egappx) * m->mfact) : 0;
 
 	wl_list_for_each(c, &clients, link) {
 		if (!VISIBLEON(c, m) || c->isfloating || c->isfullscreen)
@@ -3429,14 +4001,27 @@ tag(const Arg *arg)
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
 	printstatus();
+	drawtbars(selmon, 0, 1);
+	drawtbars(selmon, 1, 1);
 }
 
 void
 tagmon(const Arg *arg)
 {
 	Client *sel = focustop(selmon);
-	if (sel)
-		setmon(sel, dirtomon(arg->i), 0);
+	if (!sel)
+		return;
+	Monitor *old_mon = selmon;
+	setmon(sel, dirtomon(arg->i), 0);
+    if (selmon)
+        drawtbars(selmon, sel->isfloating, 1);
+    if (old_mon && selmon != old_mon)
+        drawtbars(old_mon, sel->isfloating, 1);
+	free(sel->output);
+	sel->output = strdup(sel->mon->wlr_output->name);
+	if (sel->output == NULL) {
+		die("oom");
+	}
 }
 
 void
@@ -3523,6 +4108,8 @@ toggletag(const Arg *arg)
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
 	printstatus();
+	drawtbars(selmon, 0, 1);
+	drawtbars(selmon, 1, 1);
 }
 
 void
@@ -3586,6 +4173,9 @@ unmapnotify(struct wl_listener *listener, void *data)
 {
 	/* Called when the surface is unmapped, and should no longer be shown. */
 	Client *c = wl_container_of(listener, c, unmap);
+	Monitor *m = c->mon;
+	unsigned int i;
+
 	if (c == grabc) {
 		cursor_mode = CurNormal;
 		grabc = NULL;
@@ -3619,6 +4209,25 @@ unmapnotify(struct wl_listener *listener, void *data)
 		c->swallowing = NULL;
 	}
 
+	if (c->foreign_toplevel) {
+		wlr_foreign_toplevel_handle_v1_destroy(c->foreign_toplevel);
+		c->foreign_toplevel = NULL;
+	}
+
+	if (m && !c->isfloating && m->lt[m->sellt]->arrange == monocle)
+		drawtbars(m, c->isfloating, 1);
+
+	if (c->tbar_enabled) {
+		for (i = 0; i < LENGTH(c->pool); i++)
+			if (c->pool[i])
+				wlr_buffer_drop(&c->pool[i]->base);
+
+		drwl_setimage(c->drw, NULL);
+		drwl_destroy(c->drw);
+
+		wlr_scene_node_destroy(&c->tbar_buffer->node);
+	}
+
 	wlr_scene_node_destroy(&c->scene->node);
 	printstatus();
 	motionnotify(0, NULL, 0, 0, 0, 0);
@@ -3639,9 +4248,12 @@ updatemons(struct wl_listener *listener, void *data)
 	Client *c;
 	struct wlr_output_configuration_head_v1 *config_head;
 	Monitor *m;
+	char fontattrs[12];
 
 	/* First remove from the layout the disabled monitors */
 	wl_list_for_each(m, &mons, link) {
+		if (m->asleep)
+			continue;
 		if (m->wlr_output->enabled || m->asleep)
 			continue;
 		config_head = wlr_output_configuration_head_v1_create(config, m->wlr_output);
@@ -3705,6 +4317,23 @@ updatemons(struct wl_listener *listener, void *data)
 		if (!selmon) {
 			selmon = m;
 		}
+
+		wl_list_for_each(c, &clients, link) {
+			if (!VISIBLEON(c, m) || (c->drw && (tbar_scale > 0 || c->tbar_scale == m->wlr_output->scale)))
+				continue;
+			if (!c->drw && !(c->drw = drwl_create()))
+				die("failed to create drwl context");
+			drwl_font_destroy(c->drw->font);
+			c->tbar_scale = m->wlr_output->scale;
+			snprintf(fontattrs, sizeof(fontattrs), "dpi=%.2f", 96. * c->tbar_scale);
+			if (!(drwl_font_create(c->drw, LENGTH(tbar_fonts), tbar_fonts, fontattrs)))
+				die("Could not load font");
+			if (!c->tbar_height) {
+				c->tbar_height = c->drw->font->height;
+				if (tbar_height > c->tbar_height)
+					c->tbar_height = tbar_height;
+			}
+		}
 	}
 
 	if (selmon && selmon->wlr_output->enabled) {
@@ -3734,8 +4363,15 @@ void
 updatetitle(struct wl_listener *listener, void *data)
 {
 	Client *c = wl_container_of(listener, c, set_title);
+	if (c->foreign_toplevel) {
+		const char *title;
+		if (!(title = client_get_title(c)))
+			title = broken;
+		wlr_foreign_toplevel_handle_v1_set_title(c->foreign_toplevel, title);
+	}
 	if (c == focustop(c->mon))
 		printstatus();
+	drawtbars(c->mon, c->isfloating, 1);
 }
 
 void
@@ -3749,9 +4385,10 @@ urgent(struct wl_listener *listener, void *data)
 
 	c->isurgent = 1;
 	printstatus();
+	drawtbars(c->mon, 1, 1);
 
 	if (client_surface(c)->mapped)
-		client_set_border_color(c, urgentcolor);
+		client_set_border_color(c, (float[])COLOR(colors[SchemeUrg][ColBorder]));
 }
 
 void
@@ -3807,11 +4444,11 @@ void
 virtualpointer(struct wl_listener *listener, void *data)
 {
 	struct wlr_virtual_pointer_v1_new_pointer_event *event = data;
-	struct wlr_pointer pointer = event->new_pointer->pointer;
+	struct wlr_input_device *device = &event->new_pointer->pointer.base;
 
-	wlr_cursor_attach_input_device(cursor, &pointer.base);
+	wlr_cursor_attach_input_device(cursor, device);
 	if (event->suggested_output)
-		wlr_cursor_map_input_to_output(cursor, &pointer.base, event->suggested_output);
+		wlr_cursor_map_input_to_output(cursor, device, event->suggested_output);
 }
 
 Monitor *
@@ -3881,8 +4518,10 @@ zoom(const Arg *arg)
 	wl_list_remove(&sel->link);
 	wl_list_insert(&clients, &sel->link);
 
+	drawtbars(selmon, 0, 1);
 	focusclient(sel, 1);
 	arrange(selmon);
+	drawtbars(selmon, 0, 0);
 }
 
 void
@@ -3910,6 +4549,54 @@ regions(const Arg *arg)
 				dprintf(pipefd[1], "%d,%d %dx%d\n",
 				        c->geom.x, c->geom.y, c->geom.width, c->geom.height);
 	close(pipefd[1]);
+}
+
+void
+createforeigntoplevel(Client *c)
+{
+	c->foreign_toplevel = wlr_foreign_toplevel_handle_v1_create(foreign_toplevel_mgr);
+
+	LISTEN(&c->foreign_toplevel->events.request_activate, &c->factivate, factivatenotify);
+	LISTEN(&c->foreign_toplevel->events.request_close, &c->fclose, fclosenotify);
+	LISTEN(&c->foreign_toplevel->events.request_fullscreen, &c->ffullscreen, ffullscreennotify);
+	LISTEN(&c->foreign_toplevel->events.destroy, &c->fdestroy, fdestroynotify);
+}
+
+void
+factivatenotify(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, factivate);
+	if (c->mon == selmon) {
+		c->tags = c->mon->tagset[c->mon->seltags];
+	} else {
+		setmon(c, selmon, 0);
+	}
+	focusclient(c, 1);
+	arrange(c->mon);
+}
+
+void
+fclosenotify(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, fclose);
+	client_send_close(c);
+}
+
+void
+ffullscreennotify(struct wl_listener *listener, void *data) {
+	Client *c = wl_container_of(listener, c, ffullscreen);
+	struct wlr_foreign_toplevel_handle_v1_fullscreen_event *event = data;
+	setfullscreen(c, event->fullscreen);
+}
+
+void
+fdestroynotify(struct wl_listener *listener, void *data)
+{
+	Client *c = wl_container_of(listener, c, fdestroy);
+	wl_list_remove(&c->factivate.link);
+	wl_list_remove(&c->fclose.link);
+	wl_list_remove(&c->ffullscreen.link);
+	wl_list_remove(&c->fdestroy.link);
 }
 
 #ifdef XWAYLAND
@@ -3961,6 +4648,10 @@ createnotifyx11(struct wl_listener *listener, void *data)
 	c->surface.xwayland = xsurface;
 	c->type = X11;
 	c->bw = client_is_unmanaged(c) ? 0 : borderpx;
+	c->tbar_enabled = 0;
+	c->resize_tbar_enabled = 0;
+	c->tbar_height = 0;
+	c->tbar_buffer = NULL;
 
 	/* Listen to the various events it can emit */
 	LISTEN(&xsurface->events.associate, &c->associate, associatex11);
@@ -4006,7 +4697,7 @@ sethints(struct wl_listener *listener, void *data)
 	printstatus();
 
 	if (c->isurgent && surface && surface->mapped)
-		client_set_border_color(c, urgentcolor);
+		client_set_border_color(c, (float[])COLOR(colors[SchemeUrg][ColBorder]));
 }
 
 void

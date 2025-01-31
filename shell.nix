@@ -12,8 +12,11 @@ pkgs.mkShell {
     wayland-protocols
     wayland-scanner
     libinput
-    wlroots_0_17
+    wlroots_0_18
     libxkbcommon
     pixman
+    tllist
+    fcft
+    libdrm
   ];
 }

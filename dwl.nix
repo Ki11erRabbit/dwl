@@ -11,10 +11,14 @@
     wayland-scanner,
     wayland,
     wayland-protocols,
-    wlroots_0_17,
+    wlroots_0_18,
     xcbutilwm,
     xwayland,
     gnumake,
+    pixman,
+    tllist,
+    fcft,
+    libdrm
 }:
 
 stdenv.mkDerivation ({
@@ -36,11 +40,15 @@ stdenv.mkDerivation ({
         pixman
         wayland
         wayland-protocols
-        wlroots_0_17
+        wlroots_0_18
         libX11
         xcbutilwm
         xwayland
         wayland-scanner
+        pixman
+        tllist
+        fcft
+        libdrm
     ];
     
     outputs = [ "out" "man" ];

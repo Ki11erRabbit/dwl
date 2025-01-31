@@ -10,15 +10,37 @@ static const int bypass_surface_visibility = 0;  /* 1 means idle inhibitors will
 static const int smartgaps                 = 0;  /* 1 means no outer gap when there is only one window */
 static int gaps                            = 1;  /* 1 means gaps between windows are added */
 static const unsigned int gappx            = 10; /* gap pixel between windows */
-static const unsigned int borderpx         = 2;  /* border pixel of windows */
-static const float rootcolor[]             = COLOR(0x222222ff);
-static const float bordercolor[]           = COLOR(0x282c34ff);
-static const float focuscolor[]            = COLOR(0x51afefff);
-static const float urgentcolor[]           = COLOR(0xc20000ff);
+static const unsigned int borderpx         = 1;  /* border pixel of windows */
+static const char *tbar_fonts[]            = {"monospace:size=10"};
+static const int tbar_top                  = 0;
+static const int tbar_height               = -1;
+static const int tbar_borderpx             = 1;
+static const int tbar_padding              = 10;
+static const float tbar_scale              = -1; /* -1 means use monitor scale */
+static const int tbar_float_sel_sep        = 0; /* should tbar be highlighted only on the currently selected window or on both the last selected floating window and the laste selected tiling window */
+static const float rootcolor[]             = COLOR(0x000000ff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.1f, 0.1f, 0.1f, 1.0f}; /* You can also use glsl colors */
-static const char *cursor_theme            = "Posy_Cursor";
-static const char cursor_size[]            = "32"; /* Make sure it's a valid integer, otherwise things will break */
+static const char *cursor_theme            = NULL;
+static const char cursor_size[]            = "24"; /* Make sure it's a valid integer, otherwise things will break */
+
+static uint32_t colors[][3]       = {
+    /*               fg          bg          border    */
+    [SchemeNorm] = { 0xbbc2cfff, 0x222222ff, 0x282c34ff },
+    [SchemeSel]  = { 0x51afefff, 0x282c34ff, 0x51afefff },
+    [SchemeUrg]  = { 0,          0,          0xc20000ff },
+};
+
+static uint32_t tbar_colors[][3]       = {
+    /*               fg          bg          border    */
+    [SchemeNorm] = { 0xbbc2cfff, 0x222222ff, 0x282c34ff },
+    [SchemeSel]  = { 0x51afefff, 0x282c34ff, 0x51afefff },
+    [SchemeUrg]  = { 0xc20000ff, 0x282c34ff, 0xc20000ff },
+};
+
+static const unsigned int floating_tbar_type = TBarLabel;
+static const int floating_tbar_only_top = 0;
+
 
 static const unsigned int swipe_min_threshold = 0;
 
@@ -43,31 +65,30 @@ static const char *const autostart[] = {
         NULL /* terminate */
 };
 
-static const char *const shutdown[] = {
-        "sudo", "/run/current-system/sw/bin/pkill", "kmonad", NULL,
-        "pkill", "setup-keyboard", NULL,
-        "pkill", "setup-swayidle", NULL,
-        "pkill", "setup-wallpaper", NULL,
-        NULL /* terminate */
+
+static const Menu menus[] = {
+	/* command                            feed function        action function */
+	{ "bemenu -i -l 5 -p Windows",         menuwinfeed,         menuwinaction    },
+	{ "bemenu -i -p Layouts",              menulayoutfeed,      menulayoutaction },
 };
 
 /* NOTE: ALWAYS keep a rule declared even if you don't use rules (e.g leave at least one example) */
 static const Rule rules[] = {
 	/* app_id             title       tags mask     isfloating  isterm  noswallow  monitor */
 	/* examples: */
-	//{ "Gimp_EXAMPLE",     NULL,       0,            1,          0,      0,         -1 }, /* Start on currently visible tags floating, not tiled */
-	//{ "firefox_EXAMPLE",  NULL,       1 << 8,       0,          0,      0,         -1 }, /* Start on ONLY tag "9" */
+	{ "Gimp_EXAMPLE",     NULL,       0,            1,          0,      0,         -1 }, /* Start on currently visible tags floating, not tiled */
+	{ "firefox_EXAMPLE",  NULL,       1 << 8,       0,          0,      0,         -1 }, /* Start on ONLY tag "9" */
 	{ "foot",             NULL,       0,            0,          1,      1,         -1 }, /* make foot swallow clients that are not foot */
 	{ "Alacritty",        NULL,       0,            0,          1,      1,         -1 }, /* make alacritty swallow clients that are not alacritty */
 };
 
 /* layout(s) */
 static const Layout layouts[] = {
-	/* symbol     arrange function */
-	{ "[]=",      tile },
-	{ "><>",      NULL },    /* no layout function means floating behavior */
-	{ "[M]",      monocle },
-	{ "@|@",      snail },
+    /* symbol     tbar type      tbar only on top     arrange function */
+    { "[]=",      TBarLabel,     0,                   tile },
+    { "><>",      TBarLabel,     0,                   NULL },    /* no layout function means floating behavior */
+    { "[M]",      TBarMultiple,  1,                   monocle },
+	{ "@|@",      TBarLabel,     0,                   snail },
 };
 
 /* monitors */
@@ -77,19 +98,12 @@ static const Layout layouts[] = {
 */
 /* NOTE: ALWAYS add a fallback rule, even if you are completely sure it won't be used */
 static const MonitorRule monrules[] = {
-	/* name       mfact nmaster scale layout       rotate/reflect              x  y  resx resy rate mode adaptive*/
-	/* example of a HiDPI laptop monitor at 120Hz:
-	{ "eDP-1",    0.5f,  1,      2,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL, 0, 0, 0, 0, 120.000f, 1, 1},
-	* mode let's the user decide on how dwl should implement the modes:
-	* -1 Sets a custom mode following the users choice
-	* All other number's set the mode at the index n, 0 is the standard mode; see wlr-randr
+	/* name       mfact  nmaster scale layout       rotate/reflect                x    y */
+	/* example of a HiDPI laptop monitor:
+	{ "eDP-1",    0.5f,  1,      2,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
 	*/
 	/* defaults */
-    { "HDMI-A-1", 0.55, 2,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_270,       0,   690,  1920, 1080, 60.0, 0},
-    { "DP-1",     0.55, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    1081,840,  2560, 1440, 120.0, 1},
-    { "DP-2",     0.5,  1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    3641,990,  1920, 1080, 60.0, 0},
-    { "eDP-1",    0.55, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    0,0,  1920, 1080, 60.0, 0},
-	{ NULL,       0.55f, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL, -1, -1, 0, 0, 0.0f, 0 ,1},
+	{ NULL,       0.64f, 1,      1,    &layouts[3], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
 };
 
 /* keyboard */
@@ -102,7 +116,7 @@ static const struct xkb_rule_names xkb_rules = {
 };
 
 static const int repeat_rate = 25;
-static const int repeat_delay = 400;
+static const int repeat_delay = 600;
 
 /* Trackpad */
 static const int tap_to_click = 1;
@@ -171,6 +185,7 @@ static const char *screenshotClipboard[] = { "grimshot", "copy", "area", NULL };
 static const char *screenshotSave[] = { "grimshot", "save", "area", NULL };
 static const char *screenshotClipScreen[] = { "grimshot", "copy", "screen", NULL };
 static const char *screenshotSaveScreen[] = { "grimshot", "save", "screen", NULL };
+#include "shiftview.c"
 
 #define ADDPASSRULE(S, M, K) {.appid = S, .len = LENGTH(S), .key = K}
 static const PassKeypressRule pass_rules[] = {
@@ -180,39 +195,40 @@ static const PassKeypressRule pass_rules[] = {
 	ADDPASSRULE("discord", 0, XF86XK_AudioMicMute),
 };
 
-#include "shiftview.c"
-
 static const Key keys[] = {
 	/* Note that Shift changes certain key codes: c -> C, 2 -> at, etc. */
 	/* modifier                  key                 function        argument */
 	{ MODKEY,                    XKB_KEY_d,          spawn,          {.v = menucmd} },
 	{ MODKEY,                    XKB_KEY_Return,     spawn,          {.v = termcmd} },
-	{ MODKEY,                    XKB_KEY_s,          regions,        {.v = screenshotSave} },
+    { MODKEY,                    XKB_KEY_s,          regions,        {.v = screenshotSave} },
 	{ 0,                         XKB_KEY_Print,      regions,        {.v = screenshotSaveScreen} },
 	{ 0|WLR_MODIFIER_SHIFT,      XKB_KEY_Print,      regions,        {.v = screenshotClipScreen} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_S,          regions,        {.v = screenshotClipboard} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Return,     spawn,          {.v = emacsclient} },
 	{ MODKEY,                    XKB_KEY_r,          spawn,          {.v = fileManager} },
-	{ MODKEY,                    XKB_KEY_b,          togglebar,      {0} },
+    { MODKEY,                    XKB_KEY_b,          togglebar,      {0} },
+	{ MODKEY,                    XKB_KEY_r,          regions,        SHCMD("grim -g \"$(slurp)\"") },
 	{ MODKEY,                    XKB_KEY_n,          focusstack,     {.i = +1} },
 	{ MODKEY,                    XKB_KEY_e,          focusstack,     {.i = -1} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_N,          movestack,      {.i = +1} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_E,          movestack,      {.i = -1} },
+    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_N,          pushdown,       {0} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_E,          pushup,         {0} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_I,          incnmaster,     {.i = +1} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_M,          incnmaster,     {.i = -1} },
-	{ MODKEY,                    XKB_KEY_m,          setmfact,       {.f = -0.05f} },
-	{ MODKEY,                    XKB_KEY_i,          setmfact,       {.f = +0.05f} },
+	{ MODKEY,                    XKB_KEY_i,          setmfact,       {.f = -0.05f} },
+	{ MODKEY,                    XKB_KEY_m,          setmfact,       {.f = +0.05f} },
 	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_Return,     zoom,           {0} },
 	{ MODKEY,                    XKB_KEY_Tab,        view,           {0} },
-	{ MODKEY,                    XKB_KEY_g,          togglegaps,     {0} },
 	{ MODKEY,                    XKB_KEY_l,          shiftview,      { .i = -1 } },
 	{ MODKEY,                    XKB_KEY_u,          shiftview,      { .i = 1 } },
+    { MODKEY,                    XKB_KEY_g,          togglegaps,     {0} },
 	{ MODKEY,                    XKB_KEY_q,          killclient,     {0} },
 	{ MODKEY,                    XKB_KEY_t,          setlayout,      {.v = &layouts[0]} },
 	{ MODKEY,                    XKB_KEY_f,          setlayout,      {.v = &layouts[1]} },
 	{ MODKEY,                    XKB_KEY_o,          setlayout,      {.v = &layouts[2]} },
 	{ MODKEY,                    XKB_KEY_a,          setlayout,      {.v = &layouts[3]} },
 	{ MODKEY,                    XKB_KEY_space,      setlayout,      {0} },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_u,          menu,           {.v = &menus[0]} },
+	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL, XKB_KEY_U,          menu,           {.v = &menus[1]} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_space,      togglefloating, {0} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_F,         togglefullscreen, {0} },
 	{ MODKEY,                    XKB_KEY_0,          view,           {.ui = ~0} },
@@ -231,7 +247,7 @@ static const Key keys[] = {
 	TAGKEYS(          XKB_KEY_8, XKB_KEY_asterisk,                   7),
 	TAGKEYS(          XKB_KEY_9, XKB_KEY_parenleft,                  8),
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Q,          quit,           {0} },
-	{ 0,                     XF86XK_AudioMute,       spawn,          SHCMD("pamixer --toggle-mute && pkill -RTMIN+8 waybar") },
+    { 0,                     XF86XK_AudioMute,       spawn,          SHCMD("pamixer --toggle-mute && pkill -RTMIN+8 waybar") },
 	{ 0,                     XF86XK_AudioRaiseVolume,spawn,          SHCMD("pamixer -i 3 && pkill -RTMIN+8 waybar") },
 	{ 0,                     XF86XK_AudioLowerVolume,spawn,          SHCMD("pamixer -d 3 && pkill -RTMIN+8 waybar") },
 	{ 0,                     XF86XK_AudioMicMute,    spawn,          SHCMD("amixer set Capture toggle") },
@@ -260,8 +276,8 @@ static const Button buttons[] = {
 };
 
 static const Gesture gestures[] = {
-	{ 0, SWIPE_LEFT, 3, shiftview, { .i = -1 } },
-	{ 0, SWIPE_RIGHT, 3, shiftview, { .i = 1 } },
-	{ 0, SWIPE_UP, 3, focusstack, {.i = -1} },
-	{ 0, SWIPE_DOWN, 3, focusstack, {.i = 1} },
+	{ MODKEY, SWIPE_LEFT, 3, shiftview, { .i = 1 } },
+	{ MODKEY, SWIPE_RIGHT, 3, shiftview, { .i = -1 } },
+	{ MODKEY, SWIPE_UP, 3, focusstack, {.i = 1} },
+	{ MODKEY, SWIPE_DOWN, 3, focusstack, {.i = -1} },
 };
