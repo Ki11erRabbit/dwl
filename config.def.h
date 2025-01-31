@@ -1,3 +1,4 @@
+#include <X11/XF86keysym.h>
 /* Taken from https://github.com/djpohly/dwl/issues/466 */
 #define COLOR(hex)    { ((hex >> 24) & 0xFF) / 255.0f, \
                         ((hex >> 16) & 0xFF) / 255.0f, \
@@ -25,16 +26,16 @@ static const char cursor_size[]            = "24"; /* Make sure it's a valid int
 
 static uint32_t colors[][3]       = {
     /*               fg          bg          border    */
-    [SchemeNorm] = { 0xbbbbbbff, 0x222222ff, 0x444444ff },
-    [SchemeSel]  = { 0xeeeeeeff, 0x005577ff, 0x005577ff },
-    [SchemeUrg]  = { 0,          0,          0x770000ff },
+    [SchemeNorm] = { 0xbbc2cfff, 0x222222ff, 0x282c34ff },
+    [SchemeSel]  = { 0x51afefff, 0x282c34ff, 0x51afefff },
+    [SchemeUrg]  = { 0,          0,          0xc20000ff },
 };
 
 static uint32_t tbar_colors[][3]       = {
     /*               fg          bg          border    */
-    [SchemeNorm] = { 0xbbbbbbff, 0x222222ff, 0x555555ff },
-    [SchemeSel]  = { 0xeeeeeeff, 0x005577ff, 0x555555ff },
-    [SchemeUrg]  = { 0xc7c7c7ff, 0x222222ff, 0x770000ff },
+    [SchemeNorm] = { 0xbbc2cfff, 0x222222ff, 0x282c34ff },
+    [SchemeSel]  = { 0x51afefff, 0x282c34ff, 0x51afefff },
+    [SchemeUrg]  = { 0xc20000ff, 0x282c34ff, 0xc20000ff },
 };
 
 static const unsigned int floating_tbar_type = TBarLabel;
@@ -51,15 +52,24 @@ static int log_level = WLR_ERROR;
 
 /* Autostart */
 static const char *const autostart[] = {
-        "wbg", "/path/to/your/image", NULL,
+        "waybar", NULL,
+        "fnott", NULL,
+        "configure-monitors.sh", NULL,
+        "setup-wallpaper.sh", NULL,
+        "setup-swayidle.sh", NULL,
+        "setup-keyboard.sh", NULL,
+        "nm-applet", NULL,
+        "blueman-applet", NULL,
+        "kdeconnect-indicator", NULL,
+        "dbus-update-activation-environment", "--systemd", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP", NULL,
         NULL /* terminate */
 };
 
 
 static const Menu menus[] = {
 	/* command                            feed function        action function */
-	{ "wmenu -i -l 5 -p Windows",         menuwinfeed,         menuwinaction    },
-	{ "wmenu -i -p Layouts",              menulayoutfeed,      menulayoutaction },
+	{ "bemenu -i -l 5 -p Windows",         menuwinfeed,         menuwinaction    },
+	{ "bemenu -i -p Layouts",              menulayoutfeed,      menulayoutaction },
 };
 
 /* NOTE: ALWAYS keep a rule declared even if you don't use rules (e.g leave at least one example) */
@@ -69,6 +79,7 @@ static const Rule rules[] = {
 	{ "Gimp_EXAMPLE",     NULL,       0,            1,          0,      0,         -1 }, /* Start on currently visible tags floating, not tiled */
 	{ "firefox_EXAMPLE",  NULL,       1 << 8,       0,          0,      0,         -1 }, /* Start on ONLY tag "9" */
 	{ "foot",             NULL,       0,            0,          1,      1,         -1 }, /* make foot swallow clients that are not foot */
+	{ "Alacritty",        NULL,       0,            0,          1,      1,         -1 }, /* make alacritty swallow clients that are not alacritty */
 };
 
 /* layout(s) */
@@ -151,7 +162,7 @@ LIBINPUT_CONFIG_TAP_MAP_LMR -- 1/2/3 finger tap maps to left/middle/right
 static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TAP_MAP_LRM;
 
 /* If you want to use the windows key for MODKEY, use WLR_MODIFIER_LOGO */
-#define MODKEY WLR_MODIFIER_ALT
+#define MODKEY WLR_MODIFIER_LOGO
 
 #define TAGKEYS(KEY,SKEY,TAG) \
 	{ MODKEY,                    KEY,            view,            {.ui = 1 << TAG} }, \
@@ -163,9 +174,17 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 
 /* commands */
-static const char *termcmd[] = { "foot", NULL };
-static const char *menucmd[] = { "wmenu-run", NULL };
+static const char *termcmd[] = { "alacritty", NULL };
+static const char *menucmd[] = { "bemenu-run", NULL };
 
+static const char *fileManager[] = { "dolphin", NULL };
+static const char *emacsclient[] = { "emacsclient", "-c", "-a", "\'emacs\'", NULL };
+static const char *upvol[] = { "pamixer", "-i", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
+static const char *downvol[] = { "pamixer", "-d", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
+static const char *screenshotClipboard[] = { "grimshot", "copy", "area", NULL };
+static const char *screenshotSave[] = { "grimshot", "save", "area", NULL };
+static const char *screenshotClipScreen[] = { "grimshot", "copy", "screen", NULL };
+static const char *screenshotSaveScreen[] = { "grimshot", "save", "screen", NULL };
 #include "shiftview.c"
 
 #define ADDPASSRULE(S, M, K) {.appid = S, .len = LENGTH(S), .key = K}
@@ -173,37 +192,45 @@ static const PassKeypressRule pass_rules[] = {
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_Home),
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_End),
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_F12),
-	ADDPASSRULE("discord", 0, XKB_KEY_n),
+	ADDPASSRULE("discord", 0, XF86XK_AudioMicMute),
 };
 
 static const Key keys[] = {
 	/* Note that Shift changes certain key codes: c -> C, 2 -> at, etc. */
 	/* modifier                  key                 function        argument */
-	{ MODKEY,                    XKB_KEY_p,          spawn,          {.v = menucmd} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Return,     spawn,          {.v = termcmd} },
+	{ MODKEY,                    XKB_KEY_d,          spawn,          {.v = menucmd} },
+	{ MODKEY,                    XKB_KEY_Return,     spawn,          {.v = termcmd} },
+    { MODKEY,                    XKB_KEY_s,          regions,        {.v = screenshotSave} },
+	{ 0,                         XKB_KEY_Print,      regions,        {.v = screenshotSaveScreen} },
+	{ 0|WLR_MODIFIER_SHIFT,      XKB_KEY_Print,      regions,        {.v = screenshotClipScreen} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_S,          regions,        {.v = screenshotClipboard} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Return,     spawn,          {.v = emacsclient} },
+	{ MODKEY,                    XKB_KEY_r,          spawn,          {.v = fileManager} },
     { MODKEY,                    XKB_KEY_b,          togglebar,      {0} },
 	{ MODKEY,                    XKB_KEY_r,          regions,        SHCMD("grim -g \"$(slurp)\"") },
-	{ MODKEY,                    XKB_KEY_j,          focusstack,     {.i = +1} },
-	{ MODKEY,                    XKB_KEY_k,          focusstack,     {.i = -1} },
-	{ MODKEY,                    XKB_KEY_i,          incnmaster,     {.i = +1} },
-	{ MODKEY,                    XKB_KEY_d,          incnmaster,     {.i = -1} },
-	{ MODKEY,                    XKB_KEY_h,          setmfact,       {.f = -0.05f} },
-	{ MODKEY,                    XKB_KEY_l,          setmfact,       {.f = +0.05f} },
-	{ MODKEY,                    XKB_KEY_Return,     zoom,           {0} },
+	{ MODKEY,                    XKB_KEY_n,          focusstack,     {.i = +1} },
+	{ MODKEY,                    XKB_KEY_e,          focusstack,     {.i = -1} },
+    { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_N,          pushdown,       {0} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_E,          pushup,         {0} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_I,          incnmaster,     {.i = +1} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_M,          incnmaster,     {.i = -1} },
+	{ MODKEY,                    XKB_KEY_i,          setmfact,       {.f = -0.05f} },
+	{ MODKEY,                    XKB_KEY_m,          setmfact,       {.f = +0.05f} },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_Return,     zoom,           {0} },
 	{ MODKEY,                    XKB_KEY_Tab,        view,           {0} },
-	{ MODKEY,                    XKB_KEY_a,          shiftview,      { .i = -1 } },
-	{ MODKEY,                    XKB_KEY_semicolon,  shiftview,      { .i = 1 } },
+	{ MODKEY,                    XKB_KEY_l,          shiftview,      { .i = -1 } },
+	{ MODKEY,                    XKB_KEY_u,          shiftview,      { .i = 1 } },
     { MODKEY,                    XKB_KEY_g,          togglegaps,     {0} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_C,          killclient,     {0} },
+	{ MODKEY,                    XKB_KEY_q,          killclient,     {0} },
 	{ MODKEY,                    XKB_KEY_t,          setlayout,      {.v = &layouts[0]} },
 	{ MODKEY,                    XKB_KEY_f,          setlayout,      {.v = &layouts[1]} },
-	{ MODKEY,                    XKB_KEY_m,          setlayout,      {.v = &layouts[2]} },
-	{ MODKEY,                    XKB_KEY_s,          setlayout,      {.v = &layouts[3]} },
+	{ MODKEY,                    XKB_KEY_o,          setlayout,      {.v = &layouts[2]} },
+	{ MODKEY,                    XKB_KEY_a,          setlayout,      {.v = &layouts[3]} },
 	{ MODKEY,                    XKB_KEY_space,      setlayout,      {0} },
-	{ MODKEY,                    XKB_KEY_o,          menu,           {.v = &menus[0]} },
-	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_O,          menu,           {.v = &menus[1]} },
+	{ MODKEY|WLR_MODIFIER_CTRL,  XKB_KEY_u,          menu,           {.v = &menus[0]} },
+	{ MODKEY|WLR_MODIFIER_SHIFT|WLR_MODIFIER_CTRL, XKB_KEY_U,          menu,           {.v = &menus[1]} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_space,      togglefloating, {0} },
-	{ MODKEY,                    XKB_KEY_e,         togglefullscreen, {0} },
+	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_F,         togglefullscreen, {0} },
 	{ MODKEY,                    XKB_KEY_0,          view,           {.ui = ~0} },
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_parenright, tag,            {.ui = ~0} },
 	{ MODKEY,                    XKB_KEY_comma,      focusmon,       {.i = WLR_DIRECTION_LEFT} },
@@ -220,6 +247,17 @@ static const Key keys[] = {
 	TAGKEYS(          XKB_KEY_8, XKB_KEY_asterisk,                   7),
 	TAGKEYS(          XKB_KEY_9, XKB_KEY_parenleft,                  8),
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Q,          quit,           {0} },
+    { 0,                     XF86XK_AudioMute,       spawn,          SHCMD("pamixer --toggle-mute && pkill -RTMIN+8 waybar") },
+	{ 0,                     XF86XK_AudioRaiseVolume,spawn,          SHCMD("pamixer -i 3 && pkill -RTMIN+8 waybar") },
+	{ 0,                     XF86XK_AudioLowerVolume,spawn,          SHCMD("pamixer -d 3 && pkill -RTMIN+8 waybar") },
+	{ 0,                     XF86XK_AudioMicMute,    spawn,          SHCMD("amixer set Capture toggle") },
+	{ 0,                     XF86XK_MonBrightnessUp, spawn,          SHCMD("light -A 5") },
+	{ 0,                     XF86XK_MonBrightnessDown,spawn,         SHCMD("light -U 5") },
+	{ 0,                     XF86XK_Tools,           spawn,          SHCMD("/home/ki11errabbit/.local/bin/nix-config.sh") },
+	{ 0,                     XF86XK_Search,          spawn,          SHCMD("bemenu-run") },
+	{ 0,                     XF86XK_WLAN,            spawn,          SHCMD("alacritty -e nmtui") },
+	{ 0,                     XF86XK_RotateWindows,   spawn,          SHCMD("/home/ki11errabbit/.local/bin/rotate-screen.sh") },
+	{ 0,                     XF86XK_Explorer,        spawn,          {.v = fileManager} },
 
 	/* Ctrl-Alt-Backspace and Ctrl-Alt-Fx used to be handled by X server */
 	{ WLR_MODIFIER_CTRL|WLR_MODIFIER_ALT,XKB_KEY_Terminate_Server, quit, {0} },
@@ -238,8 +276,8 @@ static const Button buttons[] = {
 };
 
 static const Gesture gestures[] = {
-	// { MODKEY, SWIPE_LEFT, 4, shiftview, { .i = 1 } },
-	// { MODKEY, SWIPE_RIGHT, 4, shiftview, { .i = -1 } },
+	{ MODKEY, SWIPE_LEFT, 3, shiftview, { .i = 1 } },
+	{ MODKEY, SWIPE_RIGHT, 3, shiftview, { .i = -1 } },
 	{ MODKEY, SWIPE_UP, 3, focusstack, {.i = 1} },
 	{ MODKEY, SWIPE_DOWN, 3, focusstack, {.i = -1} },
 };
