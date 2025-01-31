@@ -15,6 +15,10 @@
     xcbutilwm,
     xwayland,
     gnumake,
+    pixman,
+    tllist,
+    fcft,
+    libdrm
 }:
 
 stdenv.mkDerivation ({
@@ -41,6 +45,10 @@ stdenv.mkDerivation ({
         xcbutilwm
         xwayland
         wayland-scanner
+        pixman
+        tllist
+        fcft
+        libdrm
     ];
     
     outputs = [ "out" "man" ];

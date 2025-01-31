@@ -15,5 +15,8 @@ pkgs.mkShell {
     wlroots_0_18
     libxkbcommon
     pixman
+    tllist
+    fcft
+    libdrm
   ];
 }

@@ -10,14 +10,36 @@ static const int smartgaps                 = 0;  /* 1 means no outer gap when th
 static int gaps                            = 1;  /* 1 means gaps between windows are added */
 static const unsigned int gappx            = 10; /* gap pixel between windows */
 static const unsigned int borderpx         = 1;  /* border pixel of windows */
-static const float rootcolor[]             = COLOR(0x222222ff);
-static const float bordercolor[]           = COLOR(0x444444ff);
-static const float focuscolor[]            = COLOR(0x005577ff);
-static const float urgentcolor[]           = COLOR(0xff0000ff);
+static const char *tbar_fonts[]            = {"monospace:size=10"};
+static const int tbar_top                  = 0;
+static const int tbar_height               = -1;
+static const int tbar_borderpx             = 1;
+static const int tbar_padding              = 10;
+static const float tbar_scale              = -1; /* -1 means use monitor scale */
+static const int tbar_float_sel_sep        = 0; /* should tbar be highlighted only on the currently selected window or on both the last selected floating window and the laste selected tiling window */
+static const float rootcolor[]             = COLOR(0x000000ff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.1f, 0.1f, 0.1f, 1.0f}; /* You can also use glsl colors */
 static const char *cursor_theme            = NULL;
 static const char cursor_size[]            = "24"; /* Make sure it's a valid integer, otherwise things will break */
+
+static uint32_t colors[][3]       = {
+    /*               fg          bg          border    */
+    [SchemeNorm] = { 0xbbbbbbff, 0x222222ff, 0x444444ff },
+    [SchemeSel]  = { 0xeeeeeeff, 0x005577ff, 0x005577ff },
+    [SchemeUrg]  = { 0,          0,          0x770000ff },
+};
+
+static uint32_t tbar_colors[][3]       = {
+    /*               fg          bg          border    */
+    [SchemeNorm] = { 0xbbbbbbff, 0x222222ff, 0x555555ff },
+    [SchemeSel]  = { 0xeeeeeeff, 0x005577ff, 0x555555ff },
+    [SchemeUrg]  = { 0xc7c7c7ff, 0x222222ff, 0x770000ff },
+};
+
+static const unsigned int floating_tbar_type = TBarLabel;
+static const int floating_tbar_only_top = 0;
+
 
 static const unsigned int swipe_min_threshold = 0;
 
@@ -45,11 +67,11 @@ static const Rule rules[] = {
 
 /* layout(s) */
 static const Layout layouts[] = {
-	/* symbol     arrange function */
-	{ "[]=",      tile },
-	{ "><>",      NULL },    /* no layout function means floating behavior */
-	{ "[M]",      monocle },
-	{ "@|@",      snail },
+    /* symbol     tbar type      tbar only on top     arrange function */
+    { "[]=",      TBarLabel,     0,                   tile },
+    { "><>",      TBarLabel,     0,                   NULL },    /* no layout function means floating behavior */
+    { "[M]",      TBarMultiple,  1,                   monocle },
+	{ "@|@",      TBarLabel,     0,                   snail },
 };
 
 /* monitors */
