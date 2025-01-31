@@ -2260,10 +2260,12 @@ focusclient(Client *c, int lift)
 				wlr_foreign_toplevel_handle_v1_set_activated(old_c->foreign_toplevel, 0);
 		}
 	}
+    printf("Drawing tbars")
     if (c && c->mon)
         drawtbars(c->mon, c->isfloating, 0);
     if (c && old_c && old_c->mon && (old_c->mon != c->mon || old_c->isfloating != c->isfloating))
         drawtbars(old_c->mon, old_c->isfloating, 0);
+    printf("Finished Drawing tbars")
 	printstatus();
 
 	if (!c) {
@@ -2340,13 +2342,17 @@ Client *
 focustop_onlytiled(Monitor *m, int onlytiled)
 {
 	Client *c;
+    printf("Focustop_onlytiled foreach start")
 	wl_list_for_each(c, &fstack, flink) {
 		if (VISIBLEON(c, m)) {
 			if ((onlytiled == 1 && c->isfloating) || (onlytiled == 2 && !c->isfloating && m->lt[m->sellt]->arrange))
 				continue;
+
+            printf("Focustop_onlytiled foreach end")
 			return c;
 		}
 	}
+    printf("Focustop_onlytiled foreach end")
 	return NULL;
 }
 
@@ -4009,9 +4015,9 @@ void
 tagmon(const Arg *arg)
 {
 	Client *sel = focustop(selmon);
+	Monitor *old_mon = selmon;
 	if (!sel)
 		return;
-	Monitor *old_mon = selmon;
 	setmon(sel, dirtomon(arg->i), 0);
     if (selmon)
         drawtbars(selmon, sel->isfloating, 1);
