@@ -12,7 +12,7 @@ static int gaps                            = 1;  /* 1 means gaps between windows
 static const unsigned int gappx            = 10; /* gap pixel between windows */
 static const unsigned int borderpx         = 2;  /* border pixel of windows */
 static const char *tbar_fonts[]            = {"monospace:size=10"};
-static const int tbar_top                  = 0;
+static const int tbar_top                  = 1;
 static const int tbar_height               = -1;
 static const int tbar_borderpx             = 1;
 static const int tbar_padding              = 10;
