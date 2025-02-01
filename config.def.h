@@ -85,10 +85,10 @@ static const Rule rules[] = {
 /* layout(s) */
 static const Layout layouts[] = {
     /* symbol     tbar type      tbar only on top     arrange function */
-    { "[]=",      TBarLabel,     0,                   tile },
-    { "><>",      TBarLabel,     1,                   NULL },    /* no layout function means floating behavior */
-    { "[M]",      TBarMultiple,  0,                   monocle },
-	{ "@|@",      TBarLabel,     0,                   snail },
+    { "[]=",      TBarNone,      0,                   tile },
+    { "><>",      TBarNone,      1,                   NULL },    /* no layout function means floating behavior */
+    { "[M]",      TBarNone,      0,                   monocle },
+	{ "@|@",      TBarNone,      0,                   snail },
 };
 
 /* monitors */

@@ -2094,6 +2094,7 @@ drawtbars(Monitor *m, int floating, int clients_changed)
 				resize(c, c->geom, 0);
 		}
 		if (!nodraw && !c->isfullscreen) {
+            printf("%i %i\n", nodraw, c->isfullscreen);
 			drawtbar(c, tbar_type, len, ismonocle ? c : sel_in_layout, sel_in_layout);
 			if (!ismonocle && tbar_only_top)
 				nodraw = 1;
