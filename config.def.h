@@ -10,7 +10,7 @@ static const int bypass_surface_visibility = 0;  /* 1 means idle inhibitors will
 static const int smartgaps                 = 0;  /* 1 means no outer gap when there is only one window */
 static int gaps                            = 1;  /* 1 means gaps between windows are added */
 static const unsigned int gappx            = 10; /* gap pixel between windows */
-static const unsigned int borderpx         = 1;  /* border pixel of windows */
+static const unsigned int borderpx         = 2;  /* border pixel of windows */
 static const char *tbar_fonts[]            = {"monospace:size=10"};
 static const int tbar_top                  = 0;
 static const int tbar_height               = -1;
@@ -18,11 +18,11 @@ static const int tbar_borderpx             = 1;
 static const int tbar_padding              = 10;
 static const float tbar_scale              = -1; /* -1 means use monitor scale */
 static const int tbar_float_sel_sep        = 0; /* should tbar be highlighted only on the currently selected window or on both the last selected floating window and the laste selected tiling window */
-static const float rootcolor[]             = COLOR(0x000000ff);
+static const float rootcolor[]             = COLOR(0x222222ff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.1f, 0.1f, 0.1f, 1.0f}; /* You can also use glsl colors */
-static const char *cursor_theme            = NULL;
-static const char cursor_size[]            = "24"; /* Make sure it's a valid integer, otherwise things will break */
+static const char *cursor_theme            = "Posy_Cursor";
+static const char cursor_size[]            = "32"; /* Make sure it's a valid integer, otherwise things will break */
 
 static uint32_t colors[][3]       = {
     /*               fg          bg          border    */
@@ -85,10 +85,10 @@ static const Rule rules[] = {
 /* layout(s) */
 static const Layout layouts[] = {
     /* symbol     tbar type      tbar only on top     arrange function */
-    { "[]=",      TBarLabel,     0,                   tile },
-    { "><>",      TBarLabel,     0,                   NULL },    /* no layout function means floating behavior */
+    { "[]=",      TBarLabel,     1,                   tile },
+    { "><>",      TBarLabel,     1,                   NULL },    /* no layout function means floating behavior */
     { "[M]",      TBarMultiple,  1,                   monocle },
-	{ "@|@",      TBarLabel,     0,                   snail },
+	{ "@|@",      TBarLabel,     1,                   snail },
 };
 
 /* monitors */
@@ -103,7 +103,11 @@ static const MonitorRule monrules[] = {
 	{ "eDP-1",    0.5f,  1,      2,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
 	*/
 	/* defaults */
-	{ NULL,       0.64f, 1,      1,    &layouts[3], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
+    { "HDMI-A-1", 0.55, 2,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_270,       0,   690},
+    { "DP-1",     0.55, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    1081,840,},
+    { "DP-2",     0.5,  1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    3641,990},
+    { "eDP-1",    0.55, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,    0,0,  1920, 1080, 60.0, 0},
+	{ NULL,       0.64f, 1,      1,    &layouts[0], WL_OUTPUT_TRANSFORM_NORMAL,   -1,  -1 },
 };
 
 /* keyboard */
@@ -116,7 +120,7 @@ static const struct xkb_rule_names xkb_rules = {
 };
 
 static const int repeat_rate = 25;
-static const int repeat_delay = 600;
+static const int repeat_delay = 400;
 
 /* Trackpad */
 static const int tap_to_click = 1;
