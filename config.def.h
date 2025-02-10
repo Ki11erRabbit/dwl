@@ -181,7 +181,7 @@ static const enum libinput_config_tap_button_map button_map = LIBINPUT_CONFIG_TA
 static const char *termcmd[] = { "alacritty", NULL };
 static const char *menucmd[] = { "bemenu-run", NULL };
 
-static const char *fileManager[] = { "dolphin", NULL };
+static const char *fileManager[] = { "nemo", NULL };
 static const char *emacsclient[] = { "emacsclient", "-c", "-a", "\'emacs\'", NULL };
 static const char *upvol[] = { "pamixer", "-i", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
 static const char *downvol[] = { "pamixer", "-d", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
