@@ -2261,10 +2261,10 @@ focusclient(Client *c, int lift)
 				wlr_foreign_toplevel_handle_v1_set_activated(old_c->foreign_toplevel, 0);
 		}
 	}
-    if (c && c->mon)
+    /*if (c && c->mon)
         drawtbars(c->mon, c->isfloating, 0);
     if (c && old_c && old_c->mon && (old_c->mon != c->mon || old_c->isfloating != c->isfloating))
-        drawtbars(old_c->mon, old_c->isfloating, 0);
+        drawtbars(old_c->mon, old_c->isfloating, 0);*/
 	printstatus();
 
 	if (!c) {
@@ -2481,7 +2481,7 @@ incnmaster(const Arg *arg)
 		return;
 	selmon->nmaster = selmon->pertag->nmasters[selmon->pertag->curtag] = MAX(selmon->nmaster + arg->i, 0);
 	arrange(selmon);
-	drawtbars(selmon, 0, 0);
+	//drawtbars(selmon, 0, 0);
 }
 
 void
@@ -2777,7 +2777,7 @@ unset_fullscreen:
 			c->tbar_height = tbar_height;
 		c->tbar_real_height = (int)((float)c->tbar_height / c->tbar_scale);
 	}
-	drawtbars(c->mon, c->isfloating, 1);
+	//drawtbars(c->mon, c->isfloating, 1);
 }
 
 void
@@ -3464,8 +3464,8 @@ setfloating(Client *c, int floating)
 			: c->isfloating ? LyrFloat : LyrTile]);
 	arrange(c->mon);
 	printstatus();
-	drawtbars(c->mon, 0, 1);
-	drawtbars(c->mon, 1, 1);
+	//drawtbars(c->mon, 0, 1);
+	//drawtbars(c->mon, 1, 1);
 }
 
 void
@@ -3489,7 +3489,7 @@ setfullscreen(Client *c, int fullscreen)
 	}
 	arrange(c->mon);
 	printstatus();
-	drawtbars(c->mon, c->isfloating, 1);
+	//drawtbars(c->mon, c->isfloating, 1);
 }
 
 void
@@ -3515,7 +3515,7 @@ setlayout(const Arg *arg)
 	strncpy(selmon->ltsymbol, selmon->lt[selmon->sellt]->symbol, LENGTH(selmon->ltsymbol));
 	arrange(selmon);
 	printstatus();
-	drawtbars(selmon, 0, 1);
+	//drawtbars(selmon, 0, 1);
 }
 
 /* arg > 1.0 will set mfact absolutely */
@@ -3531,7 +3531,7 @@ setmfact(const Arg *arg)
 		return;
 	selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag] = f;
 	arrange(selmon);
-	drawtbars(selmon, 0, 0);
+	//drawtbars(selmon, 0, 0);
 }
 
 void
@@ -3973,8 +3973,8 @@ tag(const Arg *arg)
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
 	printstatus();
-	drawtbars(selmon, 0, 1);
-	drawtbars(selmon, 1, 1);
+	//drawtbars(selmon, 0, 1);
+	//drawtbars(selmon, 1, 1);
 }
 
 void
@@ -3985,10 +3985,10 @@ tagmon(const Arg *arg)
 	if (!sel)
 		return;
 	setmon(sel, dirtomon(arg->i), 0);
-    if (selmon)
+    /*if (selmon)
         drawtbars(selmon, sel->isfloating, 1);
     if (old_mon && selmon != old_mon)
-        drawtbars(old_mon, sel->isfloating, 1);
+        drawtbars(old_mon, sel->isfloating, 1);*/
 	free(sel->output);
 	sel->output = strdup(sel->mon->wlr_output->name);
 	if (sel->output == NULL) {
@@ -4080,8 +4080,8 @@ toggletag(const Arg *arg)
 	focusclient(focustop(selmon), 1);
 	arrange(selmon);
 	printstatus();
-	drawtbars(selmon, 0, 1);
-	drawtbars(selmon, 1, 1);
+	//drawtbars(selmon, 0, 1);
+	//drawtbars(selmon, 1, 1);
 }
 
 void
@@ -4186,8 +4186,8 @@ unmapnotify(struct wl_listener *listener, void *data)
 		c->foreign_toplevel = NULL;
 	}
 
-	if (m && !c->isfloating && m->lt[m->sellt]->arrange == monocle)
-		drawtbars(m, c->isfloating, 1);
+	/*if (m && !c->isfloating && m->lt[m->sellt]->arrange == monocle)
+		drawtbars(m, c->isfloating, 1);*/
 
 	if (c->tbar_enabled) {
 		for (i = 0; i < LENGTH(c->pool); i++)
@@ -4343,7 +4343,7 @@ updatetitle(struct wl_listener *listener, void *data)
 	}
 	if (c == focustop(c->mon))
 		printstatus();
-	drawtbars(c->mon, c->isfloating, 1);
+	//drawtbars(c->mon, c->isfloating, 1);
 }
 
 void
@@ -4357,7 +4357,7 @@ urgent(struct wl_listener *listener, void *data)
 
 	c->isurgent = 1;
 	printstatus();
-	drawtbars(c->mon, 1, 1);
+	//drawtbars(c->mon, 1, 1);
 
 	if (client_surface(c)->mapped)
 		client_set_border_color(c, (float[])COLOR(colors[SchemeUrg][ColBorder]));
@@ -4495,10 +4495,10 @@ zoom(const Arg *arg)
 	wl_list_remove(&sel->link);
 	wl_list_insert(&clients, &sel->link);
 
-	drawtbars(selmon, 0, 1);
+	//drawtbars(selmon, 0, 1);
 	focusclient(sel, 1);
 	arrange(selmon);
-	drawtbars(selmon, 0, 0);
+	//drawtbars(selmon, 0, 0);
 }
 
 void
