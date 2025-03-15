@@ -62,7 +62,7 @@ wlr-foreign-toplevel-management-unstable-v1-protocol.h:
 config.h:
 	cp config.def.h $@
 clean:
-	rm -f dwl *.o *-protocol.h
+	rm -f dwl *.o *-protocol.h *.rej *orig
 
 dist: clean
 	mkdir -p dwl-$(VERSION)
@@ -76,6 +76,8 @@ install: dwl
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
 	cp -f dwl $(DESTDIR)$(PREFIX)/bin
 	chmod 755 $(DESTDIR)$(PREFIX)/bin/dwl
+	cp -f startdwl.sh $(DESTDIR)$(PREFIX)/bin
+	chmod 755 $(DESTDIR)$(PREFIX)/bin/startdwl.sh
 	mkdir -p $(DESTDIR)$(MANDIR)/man1
 	cp -f dwl.1 $(DESTDIR)$(MANDIR)/man1
 	chmod 644 $(DESTDIR)$(MANDIR)/man1/dwl.1
