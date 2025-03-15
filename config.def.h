@@ -160,8 +160,6 @@ static const char *menucmd[] = { "bemenu-run", NULL };
 
 static const char *fileManager[] = { "nemo", NULL };
 static const char *emacsclient[] = { "emacsclient", "-c", "-a", "\'emacs\'", NULL };
-static const char *upvol[] = { "pamixer", "-i", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
-static const char *downvol[] = { "pamixer", "-d", "3", "&&", "pkill", "-RTMIN+8", "waybar", NULL };
 static const char *screenshotClipboard[] = { "grimshot", "copy", "area", NULL };
 static const char *screenshotSave[] = { "grimshot", "save", "area", NULL };
 static const char *screenshotClipScreen[] = { "grimshot", "copy", "screen", NULL };
@@ -174,7 +172,7 @@ static const PassKeypressRule pass_rules[] = {
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_Home),
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_End),
 	ADDPASSRULE("com.obsproject.Studio", MODKEY, XKB_KEY_F12),
-	ADDPASSRULE("discord", 0, XKB_KEY_n),
+	ADDPASSRULE("discord", 0, XF86XK_AudioMicMute),
 };
 
 static const Key keys[] = {
@@ -189,7 +187,7 @@ static const Key keys[] = {
 	{ MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_Return,     spawn,          {.v = emacsclient} },
 	{ MODKEY,                    XKB_KEY_r,          spawn,          {.v = fileManager} },
     { MODKEY,                    XKB_KEY_b,          togglebar,      {0} },
-	{ MODKEY,                    XKB_KEY_r,          regions,        SHCMD("grim -g \"$(slurp)\"") },
+	//{ MODKEY,                    XKB_KEY_r,          regions,        SHCMD("grim -g \"$(slurp)\"") },
 	{ MODKEY,                    XKB_KEY_n,          focusstack,     {.i = +1} },
 	{ MODKEY,                    XKB_KEY_e,          focusstack,     {.i = -1} },
     { MODKEY|WLR_MODIFIER_SHIFT, XKB_KEY_N,          pushdown,       {0} },
