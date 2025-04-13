@@ -40,6 +40,7 @@ static const char *const autostart[] = {
         "blueman-applet", NULL,
         "kdeconnect-indicator", NULL,
         "dbus-update-activation-environment", "--systemd", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP", NULL,
+        "systemctl", "--user", "enable", "--now", "polkit-gnome-authentication-agent-1", NULL,
         NULL /* terminate */
 };
 
