@@ -11,10 +11,10 @@ static const int smartgaps                 = 0;  /* 1 means no outer gap when th
 static int gaps                            = 1;  /* 1 means gaps between windows are added */
 static const unsigned int gappx            = 10; /* gap pixel between windows */
 static const unsigned int borderpx         = 2;  /* border pixel of windows */
-static const float rootcolor[]             = COLOR(0x282c34ff);
-static const float bordercolor[]           = COLOR(0x282c34ff);
-static const float focuscolor[]            = COLOR(0x51afefff);
-static const float urgentcolor[]           = COLOR(0xc20000ff);
+static const float rootcolor[]             = COLOR(0xeff1f5ff);
+static const float bordercolor[]           = COLOR(0xdd7878ff);
+static const float focuscolor[]            = COLOR(0xea76cbff);
+static const float urgentcolor[]           = COLOR(0xd20f39ff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
 static const float fullscreen_bg[]         = {0.1f, 0.1f, 0.1f, 1.0f}; /* You can also use glsl colors */
 static const char *cursor_theme            = "Posy_Cursor";
