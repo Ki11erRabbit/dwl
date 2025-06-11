@@ -12,7 +12,7 @@ static int gaps                            = 1;  /* 1 means gaps between windows
 static const unsigned int gappx            = 10; /* gap pixel between windows */
 static const unsigned int borderpx         = 2;  /* border pixel of windows */
 static const float rootcolor[]             = COLOR(0xeff1f5ff);
-static const float bordercolor[]           = COLOR(0xdd7878ff);
+static const float bordercolor[]           = COLOR(0xdce0e8ff);
 static const float focuscolor[]            = COLOR(0xea76cbff);
 static const float urgentcolor[]           = COLOR(0xd20f39ff);
 /* This conforms to the xdg-protocol. Set the alpha to zero to restore the old behavior */
